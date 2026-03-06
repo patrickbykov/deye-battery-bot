@@ -6,6 +6,6 @@ export const GRAFANA_DS_UID = process.env.GRAFANA_DS_UID;
 export const DASHBOARD_UID = process.env.GRAFANA_DASHBOARD_UID;
 export const INFLUXDB_BUCKET = process.env.INFLUXDB_BUCKET || 'monitoring';
 export const PORT = process.env.PORT || 8080;
+export const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null;
 
 export const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
-export const DASHBOARD_LINK = `${GRAFANA_URL}/d/${DASHBOARD_UID}/deye-sun-15k-battery-monitor`;
