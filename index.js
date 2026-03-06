@@ -60,7 +60,7 @@ async function handleStatus(chatId) {
     const frames = data?.results?.A?.frames;
 
     if (!frames || frames.length === 0) {
-      await sendMessage(chatId, '\u26a0\ufe0f \u041d\u0435\u043c\u0430\u0454 \u0434\u0430\u043d\u0438\u0445 \u0437\u0430 \u043e\u0441\u0442\u0430\u043d\u043d\u044e \u0433\u043e\u0434\u0438\u043d\u0443.');
+      await sendMessage(chatId, '⚠️ Немає даних за останню годину.');
       return;
     }
 
@@ -80,30 +80,30 @@ async function handleStatus(chatId) {
     const state = fieldMap['state'];
     const time = fieldMap['_time'] || fieldMap['Time'];
 
-    let socStatus = '\ud83d\udfe2 \u041d\u043e\u0440\u043c\u0430';
+    let socStatus = '🟢 Норма';
     if (soc !== null && soc !== undefined) {
-      if (soc < 10) socStatus = '\ud83d\udd34 \u041a\u0420\u0418\u0422\u0418\u0427\u041d\u041e';
-      else if (soc < 20) socStatus = '\ud83d\udfe0 \u041d\u0438\u0437\u044c\u043a\u0438\u0439';
-      else if (soc < 50) socStatus = '\ud83d\udfe1 \u0421\u0435\u0440\u0435\u0434\u043d\u0456\u0439';
+      if (soc < 10) socStatus = '🔴 КРИТИЧНО';
+      else if (soc < 20) socStatus = '🟠 Низький';
+      else if (soc < 50) socStatus = '🟡 Середній';
     }
 
     const timeStr = time ? new Date(typeof time === 'number' ? time : time).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' }) : 'N/A';
 
-    const msg = `\ud83d\udd0b <b>Deye SUN-15K — \u0421\u0442\u0430\u043d \u0431\u0430\u0442\u0430\u0440\u0435\u0457</b>
+    const msg = `🔋 <b>Deye SUN-15K — Стан батареї</b>
 
-\u26a1 SOC: <b>${fmt(soc)}%</b> ${socStatus}
-\ud83d\udd0c \u041d\u0430\u043f\u0440\u0443\u0433\u0430: <b>${fmt(voltage)}V</b>
-\u26a1 \u0421\u0442\u0440\u0443\u043c: <b>${fmt(current)}A</b>
-\ud83c\udf21 \u0422\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430: <b>${fmt(temperature)}\u00b0C</b>
-\ud83d\udca1 \u041f\u043e\u0442\u0443\u0436\u043d\u0456\u0441\u0442\u044c: <b>${fmt(power)}W</b>
-\ud83d\udcca \u0421\u0442\u0430\u043d: <b>${state ?? 'N/A'}</b>
+⚡ SOC: <b>${fmt(soc)}%</b> ${socStatus}
+🔌 Напруга: <b>${fmt(voltage)}V</b>
+⚡ Струм: <b>${fmt(current)}A</b>
+🌡 Температура: <b>${fmt(temperature)}°C</b>
+💡 Потужність: <b>${fmt(power)}W</b>
+📊 Стан: <b>${state ?? 'N/A'}</b>
 
-\ud83d\udd50 \u041e\u043d\u043e\u0432\u043b\u0435\u043d\u043e: ${timeStr}`;
+🕐 Оновлено: ${timeStr}`;
 
     await sendMessage(chatId, msg);
   } catch (err) {
     console.error('/status error:', err);
-    await sendMessage(chatId, `\u274c \u041f\u043e\u043c\u0438\u043b\u043a\u0430 \u043e\u0442\u0440\u0438\u043c\u0430\u043d\u043d\u044f \u0434\u0430\u043d\u0438\u0445: ${err.message}`);
+    await sendMessage(chatId, `❌ Помилка отримання даних: ${err.message}`);
   }
 }
 
@@ -123,13 +123,11 @@ async function handleGraph(chatId) {
     const buffer = await res.arrayBuffer();
     const blob = Buffer.from(buffer);
 
-    const FormData = (await import('node-fetch')).FormData;
-    const { Blob: NodeBlob } = await import('buffer');
-
+    const { FormData, Blob: FetchBlob } = await import('node-fetch');
     const formData = new FormData();
     formData.append('chat_id', chatId.toString());
-    formData.append('caption', '\ud83d\udcca SOC \u0437\u0430 \u043e\u0441\u0442\u0430\u043d\u043d\u0456 24 \u0433\u043e\u0434\u0438\u043d\u0438');
-    formData.append('photo', new NodeBlob([blob], { type: 'image/png' }), 'soc_graph.png');
+    formData.append('caption', '📊 SOC за останні 24 години');
+    formData.append('photo', new FetchBlob([blob], { type: 'image/png' }), 'soc_graph.png');
 
     const tgRes = await fetch(`${TG_API}/sendPhoto`, {
       method: 'POST',
@@ -138,28 +136,28 @@ async function handleGraph(chatId) {
 
     if (!tgRes.ok) {
       const dashLink = `${GRAFANA_URL}/d/${DASHBOARD_UID}/deye-sun-15k-battery-monitor`;
-      await sendMessage(chatId, `\ud83d\udcca <a href="${dashLink}">\u0412\u0456\u0434\u043a\u0440\u0438\u0442\u0438 \u0434\u0430\u0448\u0431\u043e\u0440\u0434 Grafana</a>\n\n\u26a0\ufe0f \u0420\u0435\u043d\u0434\u0435\u0440\u0438\u043d\u0433 \u0433\u0440\u0430\u0444\u0456\u043a\u0443 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0438\u0439. \u041f\u0435\u0440\u0435\u0433\u043b\u044f\u043d\u044c\u0442\u0435 \u0434\u0430\u0448\u0431\u043e\u0440\u0434 \u0437\u0430 \u043f\u043e\u0441\u0438\u043b\u0430\u043d\u043d\u044f\u043c.`);
+      await sendMessage(chatId, `📊 <a href="${dashLink}">Відкрити дашборд Grafana</a>\n\n⚠️ Рендеринг графіку недоступний. Перегляньте дашборд за посиланням.`);
     }
   } catch (err) {
     console.error('/graph error:', err);
     const dashLink = `${GRAFANA_URL}/d/${DASHBOARD_UID}/deye-sun-15k-battery-monitor`;
-    await sendMessage(chatId, `\ud83d\udcca <a href="${dashLink}">\u0412\u0456\u0434\u043a\u0440\u0438\u0442\u0438 \u0434\u0430\u0448\u0431\u043e\u0440\u0434 Grafana</a>\n\n\u26a0\ufe0f \u0413\u0440\u0430\u0444\u0456\u043a \u0442\u0438\u043c\u0447\u0430\u0441\u043e\u0432\u043e \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0438\u0439: ${err.message}`);
+    await sendMessage(chatId, `📊 <a href="${dashLink}">Відкрити дашборд Grafana</a>\n\n⚠️ Графік тимчасово недоступний: ${err.message}`);
   }
 }
 
 // --- /help command ---
 async function handleHelp(chatId) {
-  const msg = `\ud83e\udd16 <b>Deye Battery Monitor Bot</b>
+  const msg = `🤖 <b>Deye Battery Monitor Bot</b>
 
-\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u0456 \u043a\u043e\u043c\u0430\u043d\u0434\u0438:
+Доступні команди:
 
-/status — \ud83d\udd0b \u041f\u043e\u0442\u043e\u0447\u043d\u0438\u0439 \u0441\u0442\u0430\u043d \u0431\u0430\u0442\u0430\u0440\u0435\u0457
-/graph — \ud83d\udcca \u0413\u0440\u0430\u0444\u0456\u043a SOC \u0437\u0430 24 \u0433\u043e\u0434\u0438\u043d\u0438
-/help — \u2139\ufe0f \u0421\u043f\u0438\u0441\u043e\u043a \u043a\u043e\u043c\u0430\u043d\u0434
+/status — 🔋 Поточний стан батареї
+/graph — 📊 Графік SOC за 24 години
+/help — ℹ️ Список команд
 
-<i>\u0406\u043d\u0432\u0435\u0440\u0442\u043e\u0440: Deye SUN-15K-SG05LP3-EU-SM2
-\u041c\u043e\u043d\u0456\u0442\u043e\u0440\u0438\u043d\u0433: InfluxDB Cloud + Grafana
-\u0410\u043b\u0435\u0440\u0442: SOC &lt; 20% \u2192 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u043d\u0435 \u0441\u043f\u043e\u0432\u0456\u0449\u0435\u043d\u043d\u044f</i>`;
+<i>Інвертор: Deye SUN-15K-SG05LP3-EU-SM2
+Моніторинг: InfluxDB Cloud + Grafana
+Алерт: SOC &lt; 20% → автоматичне сповіщення</i>`;
 
   await sendMessage(chatId, msg);
 }
@@ -220,13 +218,13 @@ async function pollUpdates() {
 
 // --- Main loop ---
 async function main() {
-  console.log('\ud83e\udd16 Deye Battery Bot starting...');
-  console.log(`\ud83d\udce1 Grafana: ${GRAFANA_URL}`);
-  console.log(`\ud83d\udcac Telegram Chat: ${TG_CHAT_ID}`);
+  console.log('🤖 Deye Battery Bot starting...');
+  console.log(`📡 Grafana: ${GRAFANA_URL}`);
+  console.log(`💬 Telegram Chat: ${TG_CHAT_ID}`);
 
   // Validate config
   if (!TG_TOKEN || !GRAFANA_URL || !GRAFANA_SA_TOKEN || !GRAFANA_DS_UID) {
-    console.error('\u274c Missing required environment variables!');
+    console.error('❌ Missing required environment variables!');
     console.error('Required: TELEGRAM_BOT_TOKEN, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID');
     process.exit(1);
   }
@@ -236,7 +234,7 @@ async function main() {
     await fetch(`${TG_API}/getUpdates?offset=-1`);
   } catch (e) {}
 
-  console.log('\u2705 Bot is running! Polling for messages...');
+  console.log('✅ Bot is running! Polling for messages...');
 
   // Long polling loop
   while (true) {
