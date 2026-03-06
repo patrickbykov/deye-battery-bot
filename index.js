@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import http from 'http';
 
 // --- Config from environment ---
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -9,9 +10,19 @@ const GRAFANA_DS_UID = process.env.GRAFANA_DS_UID;
 const DASHBOARD_UID = process.env.GRAFANA_DASHBOARD_UID;
 const INFLUXDB_BUCKET = process.env.INFLUXDB_BUCKET || 'monitoring';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '3000');
+const PORT = process.env.PORT || 8080;
 
 const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
 let lastUpdateId = 0;
+
+// --- Health check HTTP server for Fly.io ---
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK');
+});
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check server listening on port ${PORT}`);
+});
 
 // --- Helper: format value ---
 function fmt(v, decimals = 1) {
@@ -60,7 +71,7 @@ async function handleStatus(chatId) {
     const frames = data?.results?.A?.frames;
 
     if (!frames || frames.length === 0) {
-      await sendMessage(chatId, '⚠️ Немає даних за останню годину.');
+      await sendMessage(chatId, '❌ Немає даних за останню годину');
       return;
     }
 
@@ -89,16 +100,24 @@ async function handleStatus(chatId) {
 
     const timeStr = time ? new Date(typeof time === 'number' ? time : time).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' }) : 'N/A';
 
-    const msg = `🔋 <b>Deye SUN-15K — Стан батареї</b>
+    const socBar = soc !== null && soc !== undefined ? (() => {
+      const filled = Math.round(soc / 10);
+      return '[' + '█'.repeat(filled) + '░'.repeat(10 - filled) + ']';
+    })() : '';
 
-⚡ SOC: <b>${fmt(soc)}%</b> ${socStatus}
-🔌 Напруга: <b>${fmt(voltage)}V</b>
-⚡ Струм: <b>${fmt(current)}A</b>
-🌡 Температура: <b>${fmt(temperature)}°C</b>
-💡 Потужність: <b>${fmt(power)}W</b>
+    const msg = `🔋 <b>Deye SUN-15K Battery Status</b>
+
+🔋 SOC: <b>${fmt(soc, 0)}%</b> ${soc < 20 ? '⚠️ КРИТИЧНО!' : ''}
+<code>${socBar}</code>
+
+⚡ Напруга: <b>${fmt(voltage)} V</b>
+⚡ Струм: <b>${fmt(current)} A</b>
+⚡ Потужність: <b>${fmt(power)} W</b>
+🌡️ Температура: <b>${fmt(temperature)} °C</b>
 📊 Стан: <b>${state ?? 'N/A'}</b>
 
-🕐 Оновлено: ${timeStr}`;
+🟢 Оновлено: ${timeStr}
+📊 <a href="${GRAFANA_URL}/d/${DASHBOARD_UID}">Відкрити дашборд</a>`;
 
     await sendMessage(chatId, msg);
   } catch (err) {
