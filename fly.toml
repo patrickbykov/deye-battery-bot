@@ -1,0 +1,12 @@
+app = 'deye-battery-bot'
+primary_region = 'waw'
+
+[build]
+
+[processes]
+  app = 'node index.js'
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
