@@ -178,11 +178,18 @@ async function handleHelp(chatId) {
 Моніторинг: InfluxDB Cloud + Grafana
 Алерт: SOC &lt; 20% → автоматичне сповіщення</i>`;
 
-  await sendMessage(chatId, msg);
+  await sendMessage(chatId, msg, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔋 Статус батареї', callback_data: '/status' }],
+        [{ text: '📊 Графік SOC', callback_data: '/graph' }]
+      ]
+    }
+  });
 }
 
 // --- Send Telegram message ---
-async function sendMessage(chatId, text) {
+async function sendMessage(chatId, text, options = {}) {
   try {
     const res = await fetch(`${TG_API}/sendMessage`, {
       method: 'POST',
@@ -190,7 +197,8 @@ async function sendMessage(chatId, text) {
       body: JSON.stringify({
         chat_id: chatId,
         text: text,
-        parse_mode: 'HTML'
+        parse_mode: 'HTML',
+        ...options
       })
     });
 
@@ -214,6 +222,30 @@ async function pollUpdates() {
 
     for (const update of data.result) {
       lastUpdateId = update.update_id;
+
+      // Handle callback queries (inline button presses)
+      if (update.callback_query) {
+        const cb = update.callback_query;
+        const chatId = cb.message.chat.id;
+        const command = cb.data;
+
+        console.log(`Callback: ${command} from ${cb.from?.first_name || 'unknown'}`);
+
+        if (command === '/status') {
+          await handleStatus(chatId);
+        } else if (command === '/graph') {
+          await handleGraph(chatId);
+        }
+
+        // Answer callback to remove loading indicator
+        await fetch(`${TG_API}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: cb.id })
+        });
+        continue;
+      }
+
       const msg = update.message;
       if (!msg || !msg.text) continue;
 
@@ -252,6 +284,19 @@ async function main() {
   try {
     await fetch(`${TG_API}/getUpdates?offset=-1`);
   } catch (e) {}
+
+  // Register bot menu commands
+  await fetch(`${TG_API}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      commands: [
+        { command: 'status', description: '🔋 Поточний стан батареї' },
+        { command: 'graph', description: '📊 Графік SOC за 24 години' },
+        { command: 'help', description: 'ℹ️ Список команд' }
+      ]
+    })
+  });
 
   console.log('✅ Bot is running! Polling for messages...');
 
