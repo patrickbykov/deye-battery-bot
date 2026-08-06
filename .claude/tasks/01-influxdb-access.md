@@ -6,15 +6,15 @@
 
 ## Контекст
 
-Бакет `monitoring` існує (id `1ddde32d55b6e965`, retention 30 днів) і доступний на читання через Grafana — datasource `aff44z3iv9fy8d` тримає робочий read-токен, запити повертають 200. Але **бакет порожній**: `schema.measurements()` → `[]`, дані за 3 роки → `[]`.
+Бакет `monitoring` існує (id `<BUCKET_ID>`, retention 30 днів) і доступний на читання через Grafana — datasource `<GRAFANA_DS_UID>` тримає робочий read-токен, запити повертають 200. Але **бакет порожній**: `schema.measurements()` → `[]`, дані за 3 роки → `[]`.
 
 Для колектора потрібен **write-токен**, а браузер у `cloud2.influxdata.com` не залогінений (редіректить на signup). Тобто доступу до консолі Influx зараз немає — без нього токен не створити.
 
-Org в datasource вказана як `Engineering`, продукт — InfluxDB Cloud Serverless, регіон `us-east-1-1.aws.cloud2.influxdata.com`.
+Org в datasource вказана як `<INFLUX_ORG>`, продукт — InfluxDB Cloud Serverless, регіон `us-east-1-1.aws.cloud2.influxdata.com`.
 
 ## Кроки
 
-1. Відновити вхід в акаунт InfluxDB Cloud (той, що містить org `Engineering`). Ймовірно акаунт заведено через Google/Microsoft SSO — перевірити обидва варіанти.
+1. Відновити вхід в акаунт InfluxDB Cloud (той, що містить org `<INFLUX_ORG>`). Ймовірно акаунт заведено через Google/Microsoft SSO — перевірити обидва варіанти.
 2. Підтвердити в консолі: бакет `monitoring` на місці, retention 30 днів, org id збігається з тим, що в Grafana datasource.
 3. Створити **окремий write-токен** з правами лише на запис у `monitoring` (не All Access). Назва: `deye-collector-write`.
 4. Записати org id і URL — вони знадобляться в 03.

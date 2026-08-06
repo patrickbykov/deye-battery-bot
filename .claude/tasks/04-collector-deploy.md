@@ -30,7 +30,7 @@
   schema.measurements(bucket: "monitoring")                 // містить "battery"
   schema.tagValues(bucket: "monitoring", tag: "inverter")   // непорожній
   ```
-- [ ] Дашборд `0c5a65c2-e842-4802-af8b-4079d2657640` показує дані замість «No data»
-- [ ] Alert rule `fff49r52vklc0d` вийшов зі стану `nodata` (перевірити на сторінці Alerting або через `/api/prometheus/grafana/api/v1/rules`)
+- [ ] Дашборд `<GRAFANA_DASHBOARD_UID>` показує дані замість «No data»
+- [ ] Alert rule `<ALERT_RULE_UID>` вийшов зі стану `nodata` (перевірити на сторінці Alerting або через `/api/prometheus/grafana/api/v1/rules`)
 - [ ] `fly logs -a deye-collector` не містить секретів
 - [ ] Точки надходять безперервно щонайменше годину без ручного втручання

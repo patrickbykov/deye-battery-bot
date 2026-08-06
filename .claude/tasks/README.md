@@ -17,14 +17,17 @@
 
 ## Довідка по сервісах (перевірено в браузері)
 
+> Репозиторій публічний, тому конкретні UID і адреси замінені на плейсхолдери.
+> Реальні значення — у `.claude/infra.local.md` (у `.gitignore`, не комітиться).
+
 | Ресурс | Значення |
 |---|---|
-| Grafana | `https://kl117s3.grafana.net` (Cloud Free) |
-| Дашборд | `0c5a65c2-e842-4802-af8b-4079d2657640`, slug `deye-sun-15k-battery-monitor`, 11 панелей, panel 6 = SOC |
-| InfluxDB datasource | uid `aff44z3iv9fy8d`, Flux, org `Engineering`, bucket `monitoring` (retention 30d) |
+| Grafana | `<GRAFANA_URL>` (Cloud Free) |
+| Дашборд | `<GRAFANA_DASHBOARD_UID>`, slug `deye-sun-15k-battery-monitor`, 11 панелей, panel 6 = SOC |
+| InfluxDB datasource | uid `<GRAFANA_DS_UID>`, Flux, org `<INFLUX_ORG>`, bucket `monitoring` (retention 30d) |
 | Grafana SA | `telegram-bot`, роль Viewer, токен без терміну дії |
-| Alert rule | `fff49r52vklc0d`, папка `Deye Alerts` (`eff49ei1sgbuob`) → contact point `Telegram Deye Battery` (`bff49136fkrnke`) |
-| Fly app | `deye-battery-bot`, release v5, машина `7843402c04e6d8`, регіон `fra` |
+| Alert rule | `<ALERT_RULE_UID>`, папка `Deye Alerts` (`<ALERTS_FOLDER_UID>`) → contact point `Telegram Deye Battery` (`<CONTACT_POINT_UID>`) |
+| Fly app | `deye-battery-bot`, release v5, машина `<MACHINE_ID>`, регіон `fra` |
 | Fly secrets | 7 шт., `ADMIN_CHAT_ID` **відсутній** |
 | Fly volumes | **порожньо** |
 | Рендер зображень | ✅ працює на Free-плані (перевірено) |

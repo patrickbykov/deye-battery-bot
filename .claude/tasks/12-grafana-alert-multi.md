@@ -9,10 +9,10 @@
 Прийнято рішення **лишити алертинг у Grafana**, а не переносити в бота (`alerts.js` з дизайн-доку не пишемо, таблицю `alert_state` прибрано в задачі 05).
 
 Правило вже існує й налаштоване:
-- uid `fff49r52vklc0d`, назва «🔋 Deye Battery SOC < 20%»
-- папка `Deye Alerts` (`eff49ei1sgbuob`)
-- datasource `aff44z3iv9fy8d`, `for: 1m`, `noDataState: NoData`
-- contact point `Telegram Deye Battery` (`bff49136fkrnke`, тип telegram, з `bottoken` + `chatid`)
+- uid `<ALERT_RULE_UID>`, назва «🔋 Deye Battery SOC < 20%»
+- папка `Deye Alerts` (`<ALERTS_FOLDER_UID>`)
+- datasource `<GRAFANA_DS_UID>`, `for: 1m`, `noDataState: NoData`
+- contact point `Telegram Deye Battery` (`<CONTACT_POINT_UID>`, тип telegram, з `bottoken` + `chatid`)
 - поточний стан: **`nodata`** з 10 лип 2026 — вийде з нього автоматично після задачі 04
 
 Проблема з кількома інверторами — у запиті:
@@ -44,8 +44,8 @@ from(bucket: "monitoring")
 
 Зручно робити через provisioning API:
 ```
-GET /api/v1/provisioning/alert-rules/fff49r52vklc0d
-PUT /api/v1/provisioning/alert-rules/fff49r52vklc0d
+GET /api/v1/provisioning/alert-rules/<ALERT_RULE_UID>
+PUT /api/v1/provisioning/alert-rules/<ALERT_RULE_UID>
 ```
 
 ## Критерії готовності

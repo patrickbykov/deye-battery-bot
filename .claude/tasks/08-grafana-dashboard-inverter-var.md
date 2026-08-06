@@ -6,7 +6,7 @@
 
 ## Контекст
 
-Незакомічений `grafana.js` формує render-URL із `&var-inverter=${id}`. **Це не працює:** у дашборді `0c5a65c2-e842-4802-af8b-4079d2657640` `templating` — порожній масив. Grafana мовчки проігнорує невідомий `var-` параметр, і `/graph` віддасть **однакову картинку для всіх інверторів**. Помилки не буде — просто тихо неправильний результат, найгірший вид поломки.
+Незакомічений `grafana.js` формує render-URL із `&var-inverter=${id}`. **Це не працює:** у дашборді `<GRAFANA_DASHBOARD_UID>` `templating` — порожній масив. Grafana мовчки проігнорує невідомий `var-` параметр, і `/graph` віддасть **однакову картинку для всіх інверторів**. Помилки не буде — просто тихо неправильний результат, найгірший вид поломки.
 
 Гірше: запити панелей взагалі не фільтрують за інвертором. Panel 6:
 ```flux
@@ -17,14 +17,14 @@ from(bucket: "monitoring")
 ```
 З двома інверторами це змішає дані обох в одну картинку.
 
-Плюс усі панелі посилаються на `datasource: { type: "influxdb", uid: "influxdb" }`, тоді як реальний uid — `aff44z3iv9fy8d`. Зараз резолвиться за іменем (datasource так і називається — `influxdb`), тому працює, але це збіг, а не задум.
+Плюс усі панелі посилаються на `datasource: { type: "influxdb", uid: "influxdb" }`, тоді як реальний uid — `<GRAFANA_DS_UID>`. Зараз резолвиться за іменем (datasource так і називається — `influxdb`), тому працює, але це збіг, а не задум.
 
 Панелей — 11. Panel 6 (`🔋 Battery State of Charge — Historical (7 days)`) — той, що рендерить бот.
 
 ## Кроки
 
 1. Додати template-змінну:
-   - name: `inverter`, type: Query, datasource: `aff44z3iv9fy8d`
+   - name: `inverter`, type: Query, datasource: `<GRAFANA_DS_UID>`
    - query:
      ```flux
      import "influxdata/influxdb/schema"
@@ -35,12 +35,12 @@ from(bucket: "monitoring")
    ```flux
    |> filter(fn: (r) => r.inverter == "${inverter}")
    ```
-3. Замінити `uid: "influxdb"` на `uid: "aff44z3iv9fy8d"` у всіх панелях.
+3. Замінити `uid: "influxdb"` на `uid: "<GRAFANA_DS_UID>"` у всіх панелях.
 4. Оновити заголовок дашборда — `Deye SUN-15K Battery Monitor` прив'язаний до однієї моделі; логічніше `Deye Battery Monitor` з назвою інвертора в заголовках панелей через `$inverter`.
 
 Зручно робити через API, а не клікати 11 панелей:
 ```
-GET  /api/dashboards/uid/0c5a65c2-e842-4802-af8b-4079d2657640
+GET  /api/dashboards/uid/<GRAFANA_DASHBOARD_UID>
 POST /api/dashboards/db     # з модифікованим json + version
 ```
 
@@ -50,10 +50,10 @@ POST /api/dashboards/db     # з модифікованим json + version
 - [ ] Перемикання селектора змінює дані на всіх 11 панелях
 - [ ] Render-URL з явним параметром дає різні картинки для різних інверторів:
   ```
-  /render/d-solo/0c5a65c2-.../?orgId=1&panelId=6&width=800&height=400&from=now-24h&to=now&var-inverter=<id>
+  /render/d-solo/<GRAFANA_DASHBOARD_UID>/?orgId=1&panelId=6&width=800&height=400&from=now-24h&to=now&var-inverter=<id>
   ```
 - [ ] `grep '"uid": "influxdb"'` у JSON дашборда → порожньо
-- [ ] Alert rule `fff49r52vklc0d` не зламався (він має власні запити, дашборда не торкається)
+- [ ] Alert rule `<ALERT_RULE_UID>` не зламався (він має власні запити, дашборда не торкається)
 
 ## Нотатка
 

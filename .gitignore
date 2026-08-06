@@ -144,3 +144,7 @@ vite.config.ts.timestamp-*
 data/*.db
 data/*.db-wal
 data/*.db-shm
+
+# Репозиторій публічний: реальні UID/адреси інфраструктури лишаються локально,
+# у .claude/tasks/ стоять плейсхолдери.
+.claude/*.local.md
