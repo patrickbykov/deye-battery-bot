@@ -27,8 +27,10 @@ export async function queryGrafana(fluxQuery) {
   return res.json();
 }
 
-export async function renderGrafanaPanel() {
-  const renderUrl = `${GRAFANA_URL}/render/d-solo/${DASHBOARD_UID}/deye-sun-15k-battery-monitor?orgId=1&panelId=6&width=800&height=400&from=now-24h&to=now`;
+export async function renderGrafanaPanel(inverter) {
+  const dashUid = inverter.dashboard_uid || DASHBOARD_UID;
+  const panelId = inverter.panel_id || 6;
+  const renderUrl = `${GRAFANA_URL}/render/d-solo/${dashUid}/?orgId=1&panelId=${panelId}&width=800&height=400&from=now-24h&to=now&var-inverter=${encodeURIComponent(inverter.id)}`;
   const res = await fetch(renderUrl, {
     headers: { 'Authorization': `Bearer ${GRAFANA_SA_TOKEN}` }
   });
@@ -37,4 +39,9 @@ export async function renderGrafanaPanel() {
 
   const buffer = await res.arrayBuffer();
   return Buffer.from(buffer);
+}
+
+export function getDashboardLink(inverter) {
+  const dashUid = inverter.dashboard_uid || DASHBOARD_UID;
+  return `${GRAFANA_URL}/d/${dashUid}`;
 }
