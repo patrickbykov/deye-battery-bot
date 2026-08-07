@@ -1,0 +1,322 @@
+# Deye Cloud OpenAPI — результати розвідки
+
+Розвідка для задачі `02-deye-cloud-recon.md`, зафіксована на живих запитах до реального
+особистого акаунту з інвертором Deye SUN-15K-SG05LP3-EU-SM2, 2026-08-07. Реальні
+серійники/координати нижче відредаговано; реальні значення лежать у
+`.claude/deye.local.md` (гітігноред).
+
+Джерело форми ендпойнтів: офіційний репозиторій прикладів коду Deye
+[`DeyeCloudDevelopers/deye-openapi-client-sample-code`](https://github.com/DeyeCloudDevelopers/deye-openapi-client-sample-code)
+(сайт документації на developer.deyecloud.com — це JS SPA, який не віддає читабельний
+контент звичайному HTTP-запиту; приклади коду виявились єдиним надійним джерелом
+точних назв полів, і вони збіглися з тим, що реально повернув живий API).
+
+## Регіон / базовий URL
+
+Зареєстрований застосунок — EU-регіон (`mdc: "eu"` у JWT). Базовий URL:
+
+```
+https://eu1-developer.deyecloud.com/v1.0
+```
+
+Існують інші регіони (`us1-developer.deyecloud.com`, `india-developer.deyecloud.com`) —
+обирати залежно від того, на якому регіональному сайті створено акаунт DeyeCloud.
+
+## Auth flow
+
+`POST {baseurl}/account/token?appId={appId}`
+
+Особисті акаунти (на відміну від business/OEM) автентифікуються **логіном-поштою та
+паролем** від DeyeCloud, а не лише `appId`/`appSecret` застосунку — креденшели
+з дев-порталу ідентифікують тільки *застосунок*, а не *користувача*.
+
+```bash
+curl -s -X POST "https://eu1-developer.deyecloud.com/v1.0/account/token?appId=$APP_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"appSecret\":\"$APP_SECRET\",\"email\":\"$EMAIL\",\"companyId\":\"0\",\"password\":\"$(printf '%s' "$PASSWORD" | sha256sum | cut -d' ' -f1)\"}"
+```
+
+- `password` — це SHA-256 хеш (hex) від звичайного пароля логіну DeyeCloud.
+- `companyId: "0"` вибирає контекст особистого акаунту (ненульове значення обрало б
+  організацію бізнес-учасника, згідно з коментарем у прикладі коду).
+
+Відповідь (повне тіло — перший чернетковий варіант цього документа пропустив
+`expiresIn`/`refreshToken`/`scope`/`uid`, бо перший живий приклад був вставлений
+не повністю; тут виправлено):
+
+```json
+{
+  "code": "1000000", "msg": "success", "success": true, "requestId": "...",
+  "accessToken": "eyJhbGciOiJSUzI1NiIs...<JWT>...",
+  "tokenType": "bearer",
+  "refreshToken": "eyJhbGciOiJSUzI1NiIs...<JWT>...",
+  "expiresIn": "5183999",
+  "scope": "all",
+  "uid": 13629967
+}
+```
+
+`expiresIn` присутнє, як **рядок** (не число) — `"5183999"` секунд ≈ 59,9999... днів,
+тобто **TTL ≈ 60 днів**, підтверджено звіркою з власним claim'ом `exp` у JWT
+(`accessToken` і `refreshToken` декодуються в однаковий `exp`, див. нижче).
+
+`accessToken` декодується (base64url, звичайний JWT, перевірка підпису на клієнті
+не потрібна — нам треба лише сам claim) в:
+
+```json
+{
+  "aud": ["oauth2-resource"],
+  "scope": ["all"],
+  "detail": {
+    "organizationId": 0,
+    "userId": 13629967,
+    "identifier": "REDACTED_EMAIL",
+    "mdc": "eu",
+    "appId": "REDACTED_APP_ID",
+    "tenant": "Deye"
+  },
+  "exp": 1791295526,
+  "authorities": ["all"],
+  "jti": "c5b32c64-...",
+  "client_id": "test"
+}
+```
+
+`exp` = 2026-10-06T14:05:26Z, видано ~2026-08-07 → збігається з ~60-денним `expiresIn`.
+
+`refreshToken` декодується в майже ті самі claim'и, плюс поле `ati` (access-token-id),
+що дорівнює `jti` access-токена — зв'язує пару — але з **тим самим `exp`, що й
+access-токен**. Це важливий нюанс: refresh-токен тут *не* живе довше за access-токен,
+тобто не дає довгостроковий креденшел, а хіба що (ймовірно) дешевший спосіб
+ротації до закінчення строку дії.
+
+Виділеного refresh-ендпойнта в офіційному репозиторії прикладів Deye не знайдено
+(у `clientcode/account/` є лише `obtain_token.py` і `account_info.py`) —
+використання `refreshToken` живим запитом не перевірялося. Для колектора (задача 03)
+безпечний, підтверджений підхід: декодувати `expiresIn`/`exp` одразу після отримання
+токена, кешувати його і проактивно повторювати повний `account/token` POST
+(email+пароль) із запасом (наприклад, 1 день) до закінчення строку — той самий
+механізм, що й початкова автентифікація, і він точно працює.
+
+Токен передається як `Authorization: bearer <accessToken>` (саме з малої літери
+`bearer`, як у прикладі коду) у кожному наступному запиті.
+
+## Формат помилок — завжди HTTP 200
+
+Кожна відповідь, успішна чи ні, повертається з **HTTP 200**. Помилки розрізняються
+лише за тілом JSON:
+
+```json
+{"success": true,  "code": "1000000", "msg": "success", ...}
+{"success": false, "code": "2101019", "msg": "auth invalid token", "requestId": "..."}
+{"success": false, "code": "2101017", "msg": "auth token not found", "requestId": "..."}
+```
+
+Підтверджені випадки:
+- Відсутній заголовок `Authorization` → `code: "2101017"`, `msg: "auth token not found"`.
+- Невалідний/сміттєвий токен → `code: "2101019"`, `msg: "auth invalid token"`.
+- Невідомий/неіснуючий `deviceSn` у `device/latest` → **не помилка** — `success:
+  true` з порожнім `deviceDataList: []`.
+
+**Наслідок для задачі 03**: ніколи не розгалужувати обробку помилок за HTTP-статусом —
+перевіряти `success` у тілі. Поведінка при перевищенні лімітів не тестувалась
+навантаженням (не хотілося ризикувати триггернути троттлінг на реальному особистому
+акаунті); якщо це станеться, ймовірно піде тим самим шляхом `success:false` +
+числовий `code`, а не статусом `429`.
+
+## Ендпойнти
+
+Усі — `POST` з JSON-тілом, під `{baseurl}`. Ті, що реально викликались на живих
+даних, позначені ✅; решта задокументована в репозиторії прикладів, але не
+викликалась (нижчий пріоритет для колектора, або control-ендпойнти поза скоупом).
+
+| Ендпойнт | Призначення | Перевірено на живих даних |
+|---|---|---|
+| `/account/token` | видача access-токена | ✅ |
+| `/account/info` | інформація про поточний акаунт/компанію | — |
+| `/station/list` | пагінований список станцій акаунту | ✅ |
+| `/station/device` | пагінований список пристроїв для заданих `stationIds` | ✅ |
+| `/station/listWithDevice` | станції + їхні пристрої одним запитом, з фільтром по `deviceType` | ✅ |
+| `/station/latest` | останні агреговані дані на рівні станції | — |
+| `/station/history` | історичні дані станції (гранулярність frame/день/місяць/рік) | — |
+| `/device/latest` | **останні дані для до 10 SN пристроїв — головний ендпойнт колектора** | ✅ |
+| `/device/history` | історичні дані пристрою за `measurePoints` | — |
+| `/device/measurePoints` | доступні ключі вимірювань для `deviceSn` | — |
+| `/strategy/*`, `/order/*` (commission/control) | ендпойнти керування на запис (режим батареї, режим роботи, TOU тощо) | — (поза скоупом, не потрібні для колектора лише-на-читання) |
+
+### `station/list`
+
+```bash
+curl -s -X POST "$BASE_URL/station/list" \
+  -H "Content-Type: application/json" -H "Authorization: bearer $TOKEN" \
+  -d '{"page":1,"size":10}'
+```
+
+```json
+{
+  "code": "1000000", "msg": "success", "success": true, "total": 1,
+  "stationList": [{
+    "id": "REDACTED_STATION_ID",
+    "name": "REDACTED",
+    "locationLat": 0.0, "locationLng": 0.0, "locationAddress": "REDACTED",
+    "regionTimezone": "Europe/Helsinki",
+    "gridInterconnectionType": "EXCESS",
+    "installedCapacity": 15.0,
+    "batterySOC": null,
+    "connectionStatus": "NORMAL",
+    "generationPower": 0.0,
+    "lastUpdateTime": 1786111253.0
+  }]
+}
+```
+
+Примітка: `batterySOC` на рівні *станції* був `null` — дані батареї лежать на
+пристрої-інверторі, тут не агрегуються (див. `device/latest` нижче).
+
+### `station/listWithDevice` (використано для пошуку SN пристроїв)
+
+```bash
+curl -s -X POST "$BASE_URL/station/listWithDevice" \
+  -H "Content-Type: application/json" -H "Authorization: bearer $TOKEN" \
+  -d '{"page":1,"size":10,"deviceType":"INVERTER"}'
+```
+
+Фільтр `deviceType` підтримує: `INVERTER`, `MICRO_INVERTER`, `COLLECTOR`, `BATTERY`,
+`MECD`, `METER`, `RELAY_BOX`, `OPTIMIZER`, `PV_MODULE`.
+
+### `station/device` (повний перелік пристроїв станції)
+
+```bash
+curl -s -X POST "$BASE_URL/station/device" \
+  -H "Content-Type: application/json" -H "Authorization: bearer $TOKEN" \
+  -d '{"page":1,"size":10,"stationIds":[REDACTED_STATION_ID]}'
+```
+
+На нашій станції **6 пристроїв**: 1 `COLLECTOR` (WiFi-логер SM2), 1 `INVERTER`,
+і 4 записи `BATTERY` (один агрегатний `<inverterSn>M01` + 3 SN окремих банок).
+Виклик `device/latest` для SN типу `BATTERY` повернув `deviceDataList: []` —
+**немає окремої телеметрії через цей ендпойнт**. Усі метрики батареї віддаються
+в складі відповіді `device/latest` **самого інвертора** (плаский список
+ключ/значення), а не по-банково.
+
+### `device/latest` — головний ендпойнт колектора
+
+```bash
+curl -s -X POST "$BASE_URL/device/latest" \
+  -H "Content-Type: application/json" -H "Authorization: bearer $TOKEN" \
+  -d '{"deviceList":["REDACTED_INVERTER_SN"]}'
+```
+
+Підтримує пакетний запит — до 10 значень `deviceSn` за виклик.
+
+Форма відповіді (відредаговано, обрізано до релевантних ключів — повна відповідь
+має ~90 записів у `dataList`, що покривають PV-стрінги, фази AC, мережу,
+навантаження, генератор тощо):
+
+```json
+{
+  "code": "1000000", "msg": "success", "success": true,
+  "deviceDataList": [{
+    "deviceSn": "REDACTED_INVERTER_SN",
+    "deviceType": "INVERTER",
+    "deviceState": 1,
+    "collectionTime": 1786112172,
+    "dataList": [
+      {"key": "SOC", "value": "98", "unit": "%"},
+      {"key": "BatteryVoltage", "value": "54.10", "unit": "V"},
+      {"key": "BatteryCurrent1", "value": "0.52", "unit": "A"},
+      {"key": "BatteryCurrent2", "value": "0.36", "unit": "A"},
+      {"key": "BatteryTotalCurrent", "value": "0.88", "unit": "A"},
+      {"key": "BatteryPower", "value": "58", "unit": "W"},
+      {"key": "BMSVoltage", "value": "54.40", "unit": "V"},
+      {"key": "BMSCurrent", "value": "1", "unit": "A"},
+      {"key": "BMSChargeVoltage", "value": "58.40", "unit": "V"},
+      {"key": "BMSDisChargeVoltage", "value": "0.00", "unit": "V"},
+      {"key": "BMSSOC", "value": "98", "unit": "%"},
+      {"key": "Temperature- Battery", "value": "31.00", "unit": "℃"},
+      {"key": "AC Temperature", "value": "51.40", "unit": "℃"},
+      {"key": "BatteryRatedCapacity", "value": "300", "unit": "Ah"},
+      {"key": "TotalChargeEnergy", "value": "285.70", "unit": "kWh"},
+      {"key": "TotalDischargeEnergy", "value": "196.60", "unit": "kWh"},
+      {"key": "DailyChargingEnergy", "value": "1.00", "unit": "kWh"},
+      {"key": "DailyDischargingEnergy", "value": "0.70", "unit": "kWh"}
+    ]
+  }]
+}
+```
+
+`dataList` — плаский масив `{key, value: string, unit}` — значення є рядками
+навіть для числових полів, треба парсити. `"Temperature- Battery"` — буквальний
+ключ, включно з пробілом перед дефісом — копіювати точно, не "виправляти"
+форматування.
+
+`deviceState: 1` — це прапорець онлайн/зв'язку пристрою, **не** стан заряду/простою —
+не плутати з полем `state` у InfluxDB.
+
+#### Таймстемп: `collectionTime` — реальний час виміру, а не час запиту
+
+`collectionTime` (верхній рівень, на пристрій, epoch seconds) — це реальний час
+останнього звіту пристрою — підтверджено емпірично:
+
+| Зразок | Час запиту (UTC) | `collectionTime` (UTC) | Δ від попереднього `collectionTime` |
+|---|---|---|---|
+| 1 (через `station/listWithDevice`) | 13:50:4x | 13:50:37 | — |
+| 2 (`device/latest`) | 14:08:03 | 14:05:58 | 921с (~15,4 хв) |
+| 3 (`device/latest`, миттєвий повторний запит ~1 хв потому) | 14:08:53 | 14:05:58 (без змін) | 0с |
+| 4 (`device/latest`, ~9 хв після зразка 2) | 14:17:08 | 14:16:12 | 614с (~10,2 хв) |
+
+Це підтверджує: (а) справжній таймстемп на вимір **є**, він не залежить від часу
+запиту — використовувати його як таймстемп точки в InfluxDB, а не "зараз";
+(б) опитування частіше за реальне оновлення в хмарі просто перечитує закешоване
+значення — немає сенсу опитувати частіше за каданс нижче.
+
+**Виміряна частота оновлення в хмарі: ~10–15 хвилин** (два зафіксовані інтервали:
+921с і 614с; невелика вибірка, логер може не працювати за строго фіксованим
+інтервалом). Рекомендація для `COLLECT_INTERVAL` у задачі 03: **300с (5 хв)** як
+безпечна нижня межа опитування — достатньо часто, щоб не пропускати оновлення
+більш ніж на один цикл, і без зайвого навантаження на API між реальними
+оновленнями. Колектор і так має робити дедуп за таймстемпом (за специфікацією
+задачі 03), тож коротший інтервал опитування нешкідливий, лише марнотратний.
+
+## Мапінг полів → вимір `battery` у InfluxDB
+
+| Поле InfluxDB | Поле Deye API (ключ `dataList`) | Одиниці | Примітки |
+|---|---|---|---|
+| `soc` | `SOC` | % (int) | `BMSSOC` теж присутнє, те саме значення (98) у нашому зразку — вважати надлишковим/для звірки, пріоритет за `SOC` |
+| `voltage` | `BatteryVoltage` | V (float) | `BMSVoltage` — дуже близьке, але окреме значення (54,10 проти 54,40 в одному зі зразків) — вимір інвертора проти показника BMS; основне — `BatteryVoltage` |
+| `current` | `BatteryTotalCurrent` | A (float) | Сума `BatteryCurrent1` + `BatteryCurrent2` (два паралельні стрінги/блоки BMS у цій системі) — **знак не підтверджено емпірично**, див. нижче |
+| `power` | `BatteryPower` | W (float) | **знак не підтверджено емпірично**, див. нижче |
+| `temperature` | `Temperature- Battery` | °C | точний ключ, включно з пробілом перед `-` |
+| `state` | *(прямого поля немає)* | текст/enum | **треба вивести**, див. нижче |
+| тег `inverter` | `deviceSn` пристрою типу `INVERTER` (з `station/device`/`device/latest`) | — | саме цей SN опитувати і ним тегувати — не SN колектора, не SN банки батареї |
+
+### Відкрите питання: знак `current`/`power`, і виведення `state`
+
+Усі зафіксовані зразки були в майже простійному режимі (система переважно тягне
+навантаження з мережі, малий трикл-заряд батареї) з `BatteryPower` стабільно
+малим і **позитивним** (57–58 Вт) при `SOC` на рівні 98%. Цього недостатньо, щоб
+підтвердити, чи означає позитивне значення заряд чи розряд — потрібен зразок явного
+розряду (наприклад, вночі, імпорт з мережі на навантаження без PV) і явного заряду
+(вдень, надлишок PV), щоб точно визначити знак.
+
+Поки це не підтверджено, задача 03 має виводити `state` так:
+- `power > 0` → орієнтовно `"charging"`
+- `power < 0` → орієнтовно `"discharging"`
+- `power == 0` → `"idle"`
+
+...але позначити це як **неперевірене** і повернутись до питання, коли назбирається
+кілька днів реальних даних на день/ніч циклах — варто звіряти зі змінами
+`DailyChargingEnergy` проти `DailyDischargingEnergy` (обидва присутні у відповіді),
+щоб емпірично перевірити знак з часом, а не вгадувати з одного виміру.
+
+## Інші спостереження
+
+- Перелік пристроїв станції за `station/device`: 1 `COLLECTOR` + 1 `INVERTER` +
+  4 записи `BATTERY`. Реальні серійники зафіксовано в `.claude/deye.local.md`
+  (гітігноред).
+- SN пристроїв рівня окремих банок `BATTERY` не повертають окремих даних через
+  `device/latest` — уся телеметрія батареї для гібридної системи інвертор+батарея,
+  як ця, йде через `dataList` **інвертора**, а не по-банково.
+- `companyId: "0"` у `account/token` та `detail.identifier`/`detail.userId` у
+  відповідному JWT підтверджують, що це справді контекст особистого акаунту,
+  а не бізнес/організаційний.
