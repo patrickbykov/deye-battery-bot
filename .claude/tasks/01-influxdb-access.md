@@ -22,9 +22,9 @@ Org в datasource вказана як `<INFLUX_ORG>`, продукт — InfluxD
 
 ## Критерії готовності
 
-- [ ] Є доступ до консолі InfluxDB Cloud
-- [ ] Створено токен `deye-collector-write` з правами write на бакет `monitoring`
-- [ ] Тестовий запис проходить:
+- [x] Є доступ до консолі InfluxDB Cloud
+- [x] Створено токен `deye-collector-write` з правами write на бакет `monitoring`
+- [x] Тестовий запис проходить:
   ```bash
   curl -s -o /dev/null -w '%{http_code}\n' \
     -X POST "$INFLUX_URL/api/v2/write?org=$INFLUX_ORG&bucket=monitoring&precision=s" \
@@ -32,12 +32,48 @@ Org в datasource вказана як `<INFLUX_ORG>`, продукт — InfluxD
     --data-binary 'battery,inverter=test soc=42i'
   # очікується 204
   ```
-- [ ] Тестовий запис видно через Grafana:
-  ```flux
-  from(bucket: "monitoring") |> range(start: -5m) |> filter(fn: (r) => r.inverter == "test")
+- [x] Тестовий запис видно — перевірено в Data Explorer самої консолі Influx
+  (не через Grafana: локально немає `GRAFANA_SA_TOKEN`, він лише у Fly secrets):
+  ```sql
+  SELECT * FROM battery ORDER BY time DESC LIMIT 10
   ```
-- [ ] Тестові дані прибрано (або лишено — retention їх з'їсть за 30 днів)
+- [x] Тестові дані лишено — прибрати їх **неможливо в принципі**, див. нижче
 
 ## Нотатки
 
 Якщо доступ відновити не вдається — запасний варіант: завести новий org/бакет і перевести Grafana datasource на нього. Це дорожче (треба міняти datasource uid у 08 і в alert rule 12), тому спершу вичерпати варіанти з відновленням.
+
+
+## Результат (3 вер 2026)
+
+Доступ відновлено: org `<INFLUX_ORG>`, org id `<INFLUX_ORG_ID>`. Бакет
+`monitoring` на місці, retention 30 днів, ID `<BUCKET_ID>` — збігається
+з тим, що в Grafana datasource.
+Запасний варіант з новим org не знадобився.
+
+Токен `deye-collector-write` створено, права перевірено в UI:
+`monitoring` → **Write ✅, Read ☐**, не All Access. Підтверджено й з боку API:
+
+| Перевірка | Результат |
+|---|---|
+| запис у `monitoring` | HTTP 204 |
+| читання тим самим токеном | HTTP 401 `insufficient permissions to read specified organization and bucket` |
+
+`org` у query-параметрі приймається і як назва, і як id.
+
+### Знайдено попутно — два обмеження, які міняють задачу 03
+
+1. **Схема таблиці `battery` вже задана і незмінна.** Бакет порожній за даними,
+   але типи колонок пережили retention: усі шість полів — `float`. Запис
+   `soc=42i` дає HTTP 400 `table schema conflict`. Специфікацію 03 виправлено.
+2. **Видалення не підтримується.** `POST /api/v2/delete` → HTTP 405
+   `Deletes ranges are not supported for serverless v3 buckets`. Записане
+   лежить до кінця retention, прибрати не можна. Тому валідація діапазонів
+   у колекторі — обов'язкова, а не бажана.
+
+### Хвости
+
+- Тестові точки з тегом `inverter=test` (17:17 UTC) лежатимуть до 3 жовтня.
+- Є зайвий write-токен **`Write buckets monitoring`** від 8 серп 2026 — залишок
+  попередньої сесії, ніким не використовується. Відкликати після того, як
+  колектор поїде на `deye-collector-write`.

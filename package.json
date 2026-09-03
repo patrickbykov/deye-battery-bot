@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test 'collector/*.test.js'"
   },
   "engines": {
     "node": ">=18.0.0"

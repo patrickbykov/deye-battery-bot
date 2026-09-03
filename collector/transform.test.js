@@ -1,0 +1,100 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { toPoint, toLineProtocol, selectNewPoints } from './transform.js';
+
+// Форма з docs/deye-cloud-api.md — реальна відповідь device/latest, обрізана.
+function deviceData(overrides = {}) {
+  return {
+    deviceSn: '2000000001',
+    deviceType: 'INVERTER',
+    deviceState: 1,
+    collectionTime: 1788455061,
+    dataList: [
+      { key: 'SOC', value: '98', unit: '%' },
+      { key: 'BatteryVoltage', value: '53.93', unit: 'V' },
+      { key: 'BatteryTotalCurrent', value: '1.06', unit: 'A' },
+      { key: 'BatteryPower', value: '57', unit: 'W' },
+      { key: 'Temperature- Battery', value: '26.00', unit: '℃' },
+    ],
+    ...overrides,
+  };
+}
+
+test('дістає SOC як число', () => {
+  const point = toPoint(deviceData());
+  assert.equal(point.fields.soc, 98);
+});
+
+test('дістає всі шість полів батареї, включно з ключем із пробілом', () => {
+  const point = toPoint(deviceData());
+  assert.deepEqual(point.fields, {
+    soc: 98,
+    voltage: 53.93,
+    current: 1.06,
+    power: 57,
+    temperature: 26,
+    state: 1,
+  });
+});
+
+test('тегує точку серійником інвертора', () => {
+  assert.equal(toPoint(deviceData()).inverter, '2000000001');
+});
+
+test('бере таймстемп виміру з collectionTime, а не поточний час', () => {
+  assert.equal(toPoint(deviceData()).timestamp, 1788455061);
+});
+
+test('відхиляє SOC поза діапазоном 0..100', () => {
+  const broken = deviceData();
+  broken.dataList = broken.dataList.map(d => d.key === 'SOC' ? { ...d, value: '6500' } : d);
+  assert.throws(() => toPoint(broken), /soc/);
+});
+
+test('відхиляє нечислове значення поля', () => {
+  const broken = deviceData();
+  broken.dataList = broken.dataList.map(d => d.key === 'BatteryVoltage' ? { ...d, value: 'n/a' } : d);
+  assert.throws(() => toPoint(broken), /voltage/);
+});
+
+test('відхиляє точку без collectionTime', () => {
+  assert.throws(() => toPoint(deviceData({ collectionTime: null })), /collectionTime/);
+});
+
+test('будує line protocol без суфікса i — усі поля float', () => {
+  assert.equal(
+    toLineProtocol([toPoint(deviceData())]),
+    'battery,inverter=2000000001 soc=98,voltage=53.93,current=1.06,power=57,temperature=26,state=1 1788455061'
+  );
+});
+
+test('розділяє кілька точок переводом рядка', () => {
+  const lines = toLineProtocol([
+    toPoint(deviceData()),
+    toPoint(deviceData({ deviceSn: 'SN2', collectionTime: 1788455000 })),
+  ]);
+  assert.equal(lines.split('\n').length, 2);
+  assert.match(lines.split('\n')[1], /^battery,inverter=SN2 /);
+});
+
+test('екранує спецсимволи в значенні тега', () => {
+  const point = toPoint(deviceData({ deviceSn: 'Ліфт 3,корпус=A' }));
+  assert.match(toLineProtocol([point]), /^battery,inverter=Ліфт\\ 3\\,корпус\\=A /);
+});
+
+test('на першому проході віддає всі точки', () => {
+  const points = [toPoint(deviceData())];
+  assert.deepEqual(selectNewPoints(points, new Map()), points);
+});
+
+test('відкидає точку з тим самим collectionTime, що вже записаний', () => {
+  const point = toPoint(deviceData());
+  const seen = new Map([['2000000001', 1788455061]]);
+  assert.deepEqual(selectNewPoints([point], seen), []);
+});
+
+test('відкидає точку, давнішу за вже записану', () => {
+  const point = toPoint(deviceData({ collectionTime: 1788455000 }));
+  const seen = new Map([['2000000001', 1788455061]]);
+  assert.deepEqual(selectNewPoints([point], seen), []);
+});
