@@ -1,0 +1,15 @@
+.git
+.gitignore
+.idea
+.claude
+docs
+collector
+data
+node_modules
+*.test.js
+.env
+.env.*
+fly.toml
+Dockerfile
+.dockerignore
+README.md

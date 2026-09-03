@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test 'collector/*.test.js'"
+    "test": "node --test '*.test.js' 'collector/*.test.js'"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

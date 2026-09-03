@@ -50,8 +50,10 @@ async function handleStatus(chatId, inverter = defaultInverter()) {
 
     await sendMessage(chatId, msg);
   } catch (err) {
-    console.error('/status error:', err);
-    await sendMessage(chatId, `❌ Помилка отримання даних: ${err.message}`);
+    // Деталі — в лог. Користувачу загальне повідомлення: у тексті помилки
+    // Grafana лежать uid датасорсів і внутрішні хости.
+    console.error('/status error:', err.message);
+    await sendMessage(chatId, '❌ Не вдалося отримати дані. Спробуйте за хвилину.');
   }
 }
 

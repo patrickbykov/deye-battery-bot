@@ -24,14 +24,6 @@ db.exec(`
     subscribed_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (chat_id, inverter_id)
   );
-
-  CREATE TABLE IF NOT EXISTS alert_state (
-    inverter_id TEXT NOT NULL REFERENCES inverters(id) ON DELETE CASCADE,
-    alert_type TEXT NOT NULL,
-    active INTEGER DEFAULT 0,
-    last_triggered_at TEXT,
-    PRIMARY KEY (inverter_id, alert_type)
-  );
 `);
 
 // --- Inverters ---
@@ -89,29 +81,6 @@ export function getAllSubscriptions() {
     FROM subscriptions s JOIN inverters i ON s.inverter_id = i.id
     ORDER BY s.chat_id, s.inverter_id
   `).all();
-}
-
-// --- Alert State ---
-
-export function getAlertState(inverterId, alertType) {
-  return db.prepare(
-    'SELECT * FROM alert_state WHERE inverter_id = ? AND alert_type = ?'
-  ).get(inverterId, alertType);
-}
-
-export function setAlertActive(inverterId, alertType) {
-  db.prepare(`
-    INSERT INTO alert_state (inverter_id, alert_type, active, last_triggered_at)
-    VALUES (?, ?, 1, datetime('now'))
-    ON CONFLICT(inverter_id, alert_type)
-    DO UPDATE SET active = 1, last_triggered_at = datetime('now')
-  `).run(inverterId, alertType);
-}
-
-export function clearAlert(inverterId, alertType) {
-  db.prepare(`
-    UPDATE alert_state SET active = 0 WHERE inverter_id = ? AND alert_type = ?
-  `).run(inverterId, alertType);
 }
 
 export default db;
