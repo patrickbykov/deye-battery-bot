@@ -54,7 +54,7 @@
 | 01 | [Відновити доступ до InfluxDB Cloud](01-influxdb-access.md) | ☑ |
 | 02 | [Розвідка Deye Cloud OpenAPI](02-deye-cloud-recon.md) | ☑ |
 | 03 | [Сервіс збору `collector/`](03-collector.md) | ☑ |
-| 04 | [Деплой колектора](04-collector-deploy.md) | ☐ |
+| 04 | [Деплой колектора](04-collector-deploy.md) | ☑ |
 
 ### Фаза 2 — Повернути бота в робочий стан
 
