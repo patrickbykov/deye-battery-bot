@@ -1,0 +1,15 @@
+{
+  "name": "deye-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Collects Deye Cloud telemetry into InfluxDB",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test '*.test.js'"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
