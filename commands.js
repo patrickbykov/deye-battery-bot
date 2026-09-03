@@ -43,7 +43,6 @@ async function handleStatus(chatId, inverter = defaultInverter()) {
 ⚡ Струм: <b>${fmt(f.current)} A</b>
 ⚡ Потужність: <b>${fmt(f.power)} W</b>
 🌡️ Температура: <b>${fmt(f.temperature)} °C</b>
-📊 Стан: <b>${f.state ?? 'N/A'}</b>
 
 🟢 Оновлено: ${timeStr}
 📊 <a href="${getDashboardLink(inverter)}">Відкрити дашборд</a>`;

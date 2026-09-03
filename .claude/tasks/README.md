@@ -60,9 +60,9 @@
 
 | # | Задача | Статус |
 |---|---|---|
-| 05 | [Полагодити зламану гілку](05-fix-broken-branch.md) | ☐ |
-| 06 | [Полагодити збірку й конфіг](06-docker-fly-config.md) | ☐ |
-| 07 | [Fly volume + секрети + деплой](07-fly-volume-secrets.md) | ☐ |
+| 05 | [Полагодити зламану гілку](05-fix-broken-branch.md) | ☑ |
+| 06 | [Полагодити збірку й конфіг](06-docker-fly-config.md) | ☑ |
+| 07 | [Fly volume + секрети + деплой](07-fly-volume-secrets.md) | ☑ |
 
 ### Фаза 3 — Multi-inverter
 
