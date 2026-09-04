@@ -1,77 +1,95 @@
-# 🔋 Deye Battery Telegram Bot
+# 🔋 Deye Battery Monitor
 
-Телеграм-бот для моніторингу батарей інвертора **Deye SUN-15K-SG05LP3-EU-SM2 WiFi** (15 kW, 3 фази, 2 MPPT, LV).
+Моніторинг батарей інверторів Deye з персональними сповіщеннями в Telegram.
+Волонтерський проєкт: люди підписуються на об'єкти, які їх стосуються, і
+отримують попередження, коли резервна батарея сідає.
 
-## Можливості
+## Архітектура
 
-- `/status` — поточний стан батареї (SOC, напруга, струм, температура, потужність)
-- `/graph` — графік SOC за 24 години (через Grafana Render)
-- `/help` — список команд
-- Автоматичні алерти через Grafana при SOC < 20%
-
-## Стек технологій
-
-- **InfluxDB Cloud** — зберігання метрик батареї
-- **Grafana Cloud** — дашборд, алерти, рендеринг графіків
-- **Telegram Bot API** — інтерактивні команди та сповіщення
-- **Node.js 18+** — runtime
-
-## Швидкий старт
-
-### 1. Клонувати репозиторій
-
-```bash
-git clone https://github.com/patrickbykov/deye-battery-bot.git
-cd deye-battery-bot
+```
+інвертор → Deye Cloud → колектор → InfluxDB → Grafana ─┬─→ webhook → бот → підписники
+                                                        └─→ telegram → адмін (страхувка)
 ```
 
-### 2. Встановити залежності
+Два застосунки на Fly.io, свідомо роздільні:
+
+| Застосунок | Що робить | Стан |
+|---|---|---|
+| `deye-collector` | раз на 5 хв тягне телеметрію з Deye Cloud і пише в InfluxDB | stateless |
+| `deye-battery-bot` | Telegram-бот, веб-адмінка, розсилка алертів | SQLite на волюмі |
+
+Різні креденшели, різні профілі відмов; падіння одного не забирає інше.
+
+**Алерти живуть у Grafana, не в боті.** Пороги, `for`, `noDataState` і тексти —
+там. Бот отримує webhook і лише вирішує, кому слати. Деталі —
+`docs/grafana-alerting.md`.
+
+## Як це працює для людини
+
+1. Пише боту `/subscribe` → бачить перелік об'єктів із чекбоксами.
+2. Обирає потрібні → «Надіслати заявку».
+3. Адміністратор отримує заявку в Telegram з кнопками — або відкриває
+   `/admin` у браузері, де видно всіх одразу.
+4. Після схвалення надходять сповіщення й працюють `/status` і `/graph`.
+
+Зміна набору об'єктів повертає заявку на розгляд: доступ до чужих будинків
+не має розширюватись мовчки.
+
+## Команди
+
+| Команда | Хто |
+|---|---|
+| `/subscribe` | усі — вибір об'єктів і заявка |
+| `/list`, `/mysubs` | усі |
+| `/status`, `/graph` | лише схвалені |
+| `/forgetme` | усі — видалити свій запис (з підтвердженням) |
+| `/users`, `/remove_inverter <id>`, `/export` | лише `ADMIN_CHAT_ID` |
+
+## Локальний запуск
 
 ```bash
 npm install
+cp .env.example .env          # заповнити
+node --env-file=.env index.js # Node 20+
+
+cd collector && cp .env.example .env
+node --env-file=.env index.js
 ```
 
-### 3. Налаштувати змінні оточення
+Тести — без залежностей, на вбудованому `node:test`:
 
 ```bash
-cp .env.example .env
-# Заповнити .env реальними значеннями
+npm test
 ```
 
-### 4. Запустити бота
+## Деплой
+
+Автодеплою з GitHub немає — кожна зміна це `fly deploy` руками.
 
 ```bash
-npm start
+fly deploy --ha=false                       # бот
+fly deploy ./collector --ha=false           # колектор
 ```
 
-## Змінні оточення
+**Масштабувати понад одну машину не можна:** два інстанси дадуть `409 Conflict`
+на полінгу Telegram і дві розбіжні БД.
 
-| Змінна | Опис |
-|--------|------|
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram бота від @BotFather |
-| `TELEGRAM_CHAT_ID` | Chat ID для сповіщень |
-| `GRAFANA_URL` | URL Grafana Cloud інстансу |
-| `GRAFANA_SA_TOKEN` | Service Account Token (роль Viewer) |
-| `GRAFANA_DS_UID` | UID InfluxDB datasource в Grafana |
-| `GRAFANA_DASHBOARD_UID` | UID дашборду батареї |
-| `INFLUXDB_BUCKET` | Назва InfluxDB bucket (default: monitoring) |
-| `POLL_INTERVAL` | Інтервал полінгу Telegram в мс (default: 3000) |
+## Бекап
 
-## Деплой на Render.com (безкоштовно)
+`data/bot.db` на волюмі, прив'язаному до одного хоста. Підписки й **рішення
+про доступ** — єдиний стан, який не відновить ніщо: інвертори перевідкриються
+з InfluxDB, метрики лежать там, алерти в Grafana.
 
-1. Форкнути або завантажити цей репо на GitHub
-2. Зайти на [render.com](https://render.com) → New → Background Worker
-3. Підключити GitHub репозиторій
-4. Build Command: `npm install`
-5. Start Command: `node index.js`
-6. Додати змінні оточення в Settings → Environment
-7. Deploy!
+- щодоби `VACUUM INTO`, ротація на 7 копій;
+- `/export` у Telegram — дамп файлом у чат адміна;
+- `GET /admin/export.json` — те саме з браузера.
 
-## Волонтерський проєкт 🇺🇦
+## Документація
 
-Цей бот створений для волонтерського проєкту з моніторингу сонячних інверторів.
+- `docs/deye-cloud-api.md` — розвідка Deye Cloud OpenAPI на живих запитах
+- `docs/grafana-alerting.md` — правила, шаблон повідомлень і пастки
+- `.claude/tasks/` — розбивка робіт і рішення з обґрунтуванням
 
 ## Ліцензія
 
-MIT# deye-battery-bot
-Telegram bot for Deye SUN-15K battery monitoring via Grafana &amp; InfluxDB
+MIT

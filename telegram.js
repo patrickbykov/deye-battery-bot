@@ -76,6 +76,25 @@ export async function sendPhoto(chatId, imageBuffer, caption) {
   }
 }
 
+export async function sendDocument(chatId, buffer, filename, caption) {
+  const { FormData, Blob } = await import('node-fetch');
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  if (caption) form.append('caption', caption);
+  form.append('document', new Blob([buffer], { type: 'application/json' }), filename);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${TG_API}/sendDocument`, {
+      method: 'POST', body: form, signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`sendDocument: HTTP ${res.status}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function answerCallbackQuery(callbackQueryId, text) {
   // Єдина функція без try/catch — виняток звідси вилітав у processUpdate.
   try {

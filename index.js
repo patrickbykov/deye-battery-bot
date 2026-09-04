@@ -1,11 +1,13 @@
 import fetch from 'node-fetch';
 import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, GRAFANA_WEBHOOK_TOKEN, ADMIN_PASSWORD_HASH, TG_API, PORT } from './config.js';
-import { answerCallbackQuery, sendMessage, sendPhoto, sendAlert, editMessageReplyMarkup, editMessageText } from './telegram.js';
+import { answerCallbackQuery, sendMessage, sendPhoto, sendAlert, sendDocument, editMessageReplyMarkup, editMessageText } from './telegram.js';
 import { parseCommand, createCommands, createCallbacks } from './commands.js';
 import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
 import { createAdminRoutes } from './admin-routes.js';
+import { createBackup, BACKUP_INTERVAL_MS } from './backup.js';
+import path from 'node:path';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer, readBody } from './http-server.js';
@@ -51,6 +53,13 @@ const adminCommands = new Map([
     }
     store.removeInverter(arg);
     await sendMessage(chatId, `🗑 Об’єкт ${arg} видалено разом з підписками на нього.`);
+  }],
+  ['/export', async ({ chatId }) => {
+    // Telegram як позасмугове сховище бекапів: волюм прив'язаний до одного
+    // хоста, і його втрата означає, що всі знову pending.
+    const dump = Buffer.from(JSON.stringify(store.exportAll(), null, 2));
+    await sendDocument(chatId, dump, `deye-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      '💾 Дамп користувачів, підписок і об’єктів');
   }],
   ['/users', async ({ chatId }) => {
     const users = store.listUsersWithSubscriptions();
@@ -286,6 +295,15 @@ async function main() {
   });
   discovery.runOnce();
   setInterval(() => discovery.runOnce(), DISCOVERY_INTERVAL_MS).unref();
+
+  const backup = createBackup({
+    store, dir: path.dirname(DEFAULT_DB_PATH), keep: 7, log: console,
+  });
+  backup.runOnce();
+  setInterval(() => {
+    backup.runOnce();
+    store.pruneDeliveries(7);
+  }, BACKUP_INTERVAL_MS).unref();
 
   console.log('Bot is running! Polling for messages...');
 
