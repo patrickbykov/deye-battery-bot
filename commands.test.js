@@ -29,6 +29,9 @@ function harness() {
   store.upsertInverter('INV1', 'Перший', 'DASH');
   store.upsertInverter('INV2', 'Другий', 'DASH');
   store.upsertUser(7, 'petro', 'Петро');
+  // Гейт задачі 18: /status і /graph доступні лише схваленим. Ці тести
+  // перевіряють механіку команд, а не гейт — він має власні тести.
+  store.setUserStatus(7, 'approved', 'test');
 
   const sent = [];
   const photos = [];
@@ -80,6 +83,7 @@ test('/status без підписок → підказка, а не порожн
 test('/status з двома підписками → два окремі повідомлення', async () => {
   const { commands, store, sent, ctx } = harness();
   store.replaceSubscriptions(7, ['INV1', 'INV2']);
+  store.setUserStatus(7, 'approved', 'test');   // зміна набору повернула в pending
   await commands.get('/status')(ctx);
   assert.equal(sent.length, 2);
   assert.match(sent[0].text, /Перший/);
@@ -89,6 +93,7 @@ test('/status з двома підписками → два окремі пов�
 test('/graph з двома підписками → два різні графіки', async () => {
   const { commands, store, photos, ctx } = harness();
   store.replaceSubscriptions(7, ['INV1', 'INV2']);
+  store.setUserStatus(7, 'approved', 'test');
   await commands.get('/graph')(ctx);
   assert.equal(photos.length, 2);
   assert.notEqual(photos[0].caption, photos[1].caption);
@@ -97,6 +102,7 @@ test('/graph з двома підписками → два різні графі
 test('/mysubs і /unsubscribe', async () => {
   const { commands, store, sent, ctx } = harness();
   store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
   await commands.get('/mysubs')(ctx);
   assert.match(sent[0].text, /INV1|Перший/);
 
@@ -119,6 +125,7 @@ test('помилка Grafana не показує користувачу внут
     sleep: () => Promise.resolve(),
   });
   store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
   await commands.get('/status')(ctx);
   assert.doesNotMatch(sent.join(' '), /aff44z3iv9fy8d/);
 });
@@ -251,4 +258,106 @@ test('/subscribe без аргументу показує клавіатуру �
   await commands.get('/subscribe')({ chatId: 7, from: { id: 7 } });
   assert.ok(sent[0].o?.reply_markup, 'має бути inline-клавіатура');
   assert.ok(sent[0].o.reply_markup.inline_keyboard[0][0].text.startsWith(CHECK));
+});
+
+// --- Гейт доступу і схвалення (задача 18) ---
+
+function gateHarness(status) {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+  if (status) store.setUserStatus(7, status, 'web');
+
+  const sent = [];
+  let grafanaCalled = false;
+  const commands = createCommands({
+    store,
+    telegram: { sendMessage: async (c, t) => sent.push(t), sendPhoto: async () => {} },
+    grafana: {
+      queryGrafana: async () => { grafanaCalled = true; return { results: { A: { frames: [] } } }; },
+      renderGrafanaPanel: async () => { grafanaCalled = true; return Buffer.from(''); },
+      getDashboardLink: () => 'https://g',
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+  return { store, commands, sent, grafana: () => grafanaCalled };
+}
+
+test('несхвалений не доходить до Grafana — рендер метрований', async () => {
+  const { commands, sent, grafana } = gateHarness('pending');
+  await commands.get('/graph')({ chatId: 7 });
+  assert.equal(grafana(), false, 'запиту до Grafana бути не повинно');
+  assert.match(sent[0], /розгляд/i);
+});
+
+test('відхиленому кажуть прямо і пропонують спробувати пізніше', async () => {
+  const { commands, sent } = gateHarness('rejected');
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /відхилено/i);
+  assert.match(sent[0], /пізніше/i);
+});
+
+test('схвалений проходить до даних', async () => {
+  const { commands, grafana } = gateHarness('approved');
+  await commands.get('/status')({ chatId: 7 });
+  assert.equal(grafana(), true);
+});
+
+test('/forgetme без підтвердження нічого не видаляє', async () => {
+  const { commands, store, sent } = gateHarness('approved');
+  await commands.get('/forgetme')({ chatId: 7 });
+  assert.ok(store.getUser(7), 'користувач має лишитись');
+  assert.match(sent[0], /підтверд/i);
+});
+
+function adminHarness() {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+  const toUser = [], toasts = [], texts = [];
+  const callbacks = createCallbacks({
+    store,
+    telegram: {
+      editMessageReplyMarkup: async () => {},
+      editMessageText: async (c, m, t) => texts.push(t),
+      answerCallbackQuery: async (id, t) => toasts.push(t),
+      sendMessage: async (c, t) => toUser.push({ c, t }),
+    },
+    notifyAdmin: async () => {},
+    log: { info() {}, warn() {}, error() {} },
+    adminChatId: 99,
+  });
+  return { store, callbacks, toUser, toasts, texts };
+}
+
+test('адмін схвалює — статус міняється, користувач дізнається', async () => {
+  const { store, callbacks, toUser } = adminHarness();
+  await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'ok:7' });
+
+  assert.equal(store.getUser(7).status, 'approved');
+  assert.equal(toUser[0].c, 7);
+  assert.match(toUser[0].t, /схвалено|доступ/i);
+});
+
+test('не-адмін не може схвалити нікого', async () => {
+  const { store, callbacks } = adminHarness();
+  await callbacks.get('a')({ chatId: 5, messageId: 1, callbackId: 'c', from: { id: 5 }, value: 'ok:7' });
+  assert.equal(store.getUser(7).status, 'pending', 'статус не мав змінитись');
+});
+
+test('відхилення лишає підписки — людину можуть схвалити пізніше', async () => {
+  const { store, callbacks } = adminHarness();
+  await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'no:7' });
+  assert.equal(store.getUser(7).status, 'rejected');
+  assert.deepEqual(store.getSubscriptions(7).map(i => i.id), ['INV1']);
+});
+
+test('видалення себе прибирає користувача й підписки', async () => {
+  const { store, callbacks } = adminHarness();
+  await callbacks.get('fg')({ chatId: 7, messageId: 1, callbackId: 'c', from: { id: 7 }, value: 'yes' });
+  assert.equal(store.getUser(7), undefined);
+  assert.equal(store.raw.prepare('SELECT count(*) n FROM subscriptions').get().n, 0);
 });

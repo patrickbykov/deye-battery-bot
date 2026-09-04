@@ -28,6 +28,32 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
     store.upsertUser(chatId, from?.username ?? null, from?.first_name ?? null);
   }
 
+  // Гейт доступу. Закриває дірку задачі 13 §5: рендер /render/d-solo —
+  // метрована операція на Free-плані Grafana, і до неї не має дотягнутись
+  // ніхто, кого адмін не схвалив.
+  function accessDenial(chatId) {
+    const user = store.getUser(chatId);
+    if (user?.status === 'approved') return null;
+    if (user?.status === 'pending') {
+      return 'Ваша заявка на розгляді. Щойно адміністратор її схвалить, надійде сповіщення.';
+    }
+    if (user?.status === 'rejected') {
+      return 'Заявку відхилено. Можна спробувати пізніше — /subscribe.';
+    }
+    return 'Щоб отримати доступ, оберіть об’єкти й надішліть заявку: /subscribe';
+  }
+
+  function gated(handler) {
+    return async ctx => {
+      const denial = accessDenial(ctx.chatId);
+      if (denial) {
+        await sendMessage(ctx.chatId, denial);
+        return;
+      }
+      await handler(ctx);
+    };
+  }
+
   async function eachSubscription(chatId, fn) {
     const inverters = store.getSubscriptions(chatId);
     if (inverters.length === 0) {
@@ -142,7 +168,7 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
       : '📌 <b>Ваші підписки</b>\n\n' + inverters.map(i => `• ${i.name} (<code>${i.id}</code>)`).join('\n'));
   });
 
-  handlers.set('/status', async ({ chatId }) => {
+  handlers.set('/status', gated(async ({ chatId }) => {
     await eachSubscription(chatId, async inverter => {
       try {
         await statusOf(chatId, inverter);
@@ -153,9 +179,9 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
         await sendMessage(chatId, `❌ ${inverter.name}: дані тимчасово недоступні.`);
       }
     });
-  });
+  }));
 
-  handlers.set('/graph', async ({ chatId }) => {
+  handlers.set('/graph', gated(async ({ chatId }) => {
     await eachSubscription(chatId, async inverter => {
       try {
         const image = await renderGrafanaPanel(inverter);
@@ -166,6 +192,59 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
           `📊 <a href="${getDashboardLink(inverter)}">${inverter.name} — відкрити дашборд</a>\n\n⚠️ Графік тимчасово недоступний.`);
       }
     });
+  }));
+
+  handlers.set('/forgetme', async ({ chatId }) => {
+    // Незворотна дія — тільки з підтвердженням окремою кнопкою.
+    await sendMessage(chatId,
+      '⚠️ Це видалить ваш запис і всі підписки. Відновити не можна.\n\nПідтверджуєте?',
+      { reply_markup: { inline_keyboard: [[
+        { text: '🗑 Так, видалити', callback_data: 'fg:yes' },
+        { text: 'Скасувати', callback_data: 'fg:no' },
+      ]] } });
+  });
+
+  handlers.set('a', async ({ messageId, chatId, callbackId, from, value }) => {
+    // Перевірка тут, а не лише при показі кнопок: callback_data може
+    // надіслати будь-хто, хто вгадає формат.
+    if (adminChatId === null || from?.id !== adminChatId) {
+      await telegram.answerCallbackQuery(callbackId);
+      return;
+    }
+    const [decision, target] = String(value ?? '').split(':');
+    const targetId = Number(target);
+    const user = store.getUser(targetId);
+    if (!user) {
+      await telegram.answerCallbackQuery(callbackId, 'Користувача вже немає');
+      return;
+    }
+
+    const approved = decision === 'ok';
+    // Відхилення НЕ видаляє підписки: людину можуть схвалити пізніше, і
+    // змушувати обирати заново — марна робота.
+    store.setUserStatus(targetId, approved ? 'approved' : 'rejected', `tg:${from.id}`);
+
+    const who = user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.first_name ?? targetId);
+    await telegram.editMessageText(chatId, messageId,
+      `${approved ? '✅ Схвалено' : '🚫 Відхилено'} ${who}`);
+    await telegram.answerCallbackQuery(callbackId, approved ? 'Схвалено' : 'Відхилено');
+    await telegram.sendMessage(targetId, approved
+      ? '✅ Доступ відкрито. /status — поточний стан, /graph — графік.'
+      : '🚫 Заявку відхилено. Можна спробувати пізніше — /subscribe.');
+    log.info(`Рішення ${approved ? 'approve' : 'reject'} для chat:${targetId}`);
+  });
+
+  handlers.set('fg', async ({ chatId, messageId, callbackId, value }) => {
+    if (value !== 'yes') {
+      await telegram.editMessageText(chatId, messageId, 'Скасовано.');
+      await telegram.answerCallbackQuery(callbackId);
+      return;
+    }
+    store.deleteUser(chatId);
+    await telegram.editMessageText(chatId, messageId,
+      '🗑 Ваш запис і підписки видалено. /subscribe — почати спочатку.');
+    await telegram.answerCallbackQuery(callbackId, 'Видалено');
+    log.info(`Видалення за запитом chat:${chatId}`);
   });
 
   return handlers;
@@ -173,7 +252,7 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
 
 // --- Обробники натискань на inline-клавіатурі ---
 
-export function createCallbacks({ store, telegram, notifyAdmin, log }) {
+export function createCallbacks({ store, telegram, notifyAdmin, log, adminChatId = null }) {
   const handlers = new Map();
 
   function idsFromRowids(rowids) {
@@ -213,8 +292,56 @@ export function createCallbacks({ store, telegram, notifyAdmin, log }) {
     // Ім'я обирає сама людина, тож воно може містити '<' — і тоді Telegram
     // відхилив би повідомлення адміну цілком з 400.
     const who = from?.username ? '@' + escapeHtml(from.username) : escapeHtml(from?.first_name ?? chatId);
-    await notifyAdmin(`🆕 <b>Нова заявка</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${chosen.map(i => escapeHtml(i.name)).join(', ')}`);
+    await notifyAdmin(
+      `🆕 <b>Нова заявка</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${chosen.map(i => escapeHtml(i.name)).join(', ')}`,
+      { reply_markup: { inline_keyboard: [[
+        { text: '✅ Схвалити', callback_data: `a:ok:${chatId}` },
+        { text: '🚫 Відхилити', callback_data: `a:no:${chatId}` },
+      ]] } });
     log.info(`Заявка від chat:${chatId} на ${chosen.length} об’єкт(ів)`);
+  });
+
+  handlers.set('a', async ({ messageId, chatId, callbackId, from, value }) => {
+    // Перевірка тут, а не лише при показі кнопок: callback_data може
+    // надіслати будь-хто, хто вгадає формат.
+    if (adminChatId === null || from?.id !== adminChatId) {
+      await telegram.answerCallbackQuery(callbackId);
+      return;
+    }
+    const [decision, target] = String(value ?? '').split(':');
+    const targetId = Number(target);
+    const user = store.getUser(targetId);
+    if (!user) {
+      await telegram.answerCallbackQuery(callbackId, 'Користувача вже немає');
+      return;
+    }
+
+    const approved = decision === 'ok';
+    // Відхилення НЕ видаляє підписки: людину можуть схвалити пізніше, і
+    // змушувати обирати заново — марна робота.
+    store.setUserStatus(targetId, approved ? 'approved' : 'rejected', `tg:${from.id}`);
+
+    const who = user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.first_name ?? targetId);
+    await telegram.editMessageText(chatId, messageId,
+      `${approved ? '✅ Схвалено' : '🚫 Відхилено'} ${who}`);
+    await telegram.answerCallbackQuery(callbackId, approved ? 'Схвалено' : 'Відхилено');
+    await telegram.sendMessage(targetId, approved
+      ? '✅ Доступ відкрито. /status — поточний стан, /graph — графік.'
+      : '🚫 Заявку відхилено. Можна спробувати пізніше — /subscribe.');
+    log.info(`Рішення ${approved ? 'approve' : 'reject'} для chat:${targetId}`);
+  });
+
+  handlers.set('fg', async ({ chatId, messageId, callbackId, value }) => {
+    if (value !== 'yes') {
+      await telegram.editMessageText(chatId, messageId, 'Скасовано.');
+      await telegram.answerCallbackQuery(callbackId);
+      return;
+    }
+    store.deleteUser(chatId);
+    await telegram.editMessageText(chatId, messageId,
+      '🗑 Ваш запис і підписки видалено. /subscribe — почати спочатку.');
+    await telegram.answerCallbackQuery(callbackId, 'Видалено');
+    log.info(`Видалення за запитом chat:${chatId}`);
   });
 
   return handlers;

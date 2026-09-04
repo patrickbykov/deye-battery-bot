@@ -19,13 +19,14 @@ const commands = createCommands({
   log: console,
 });
 
-const notifyAdmin = msg => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg) : Promise.resolve());
+const notifyAdmin = (msg, options) => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg, options) : Promise.resolve());
 
 const callbacks = createCallbacks({
   store,
   telegram: { editMessageReplyMarkup, editMessageText, answerCallbackQuery, sendMessage },
   notifyAdmin,
   log: console,
+  adminChatId: ADMIN_CHAT_ID,
 });
 
 // Адмінські команди — окрема мапа. Не-адміну вони відповідають так само, як
@@ -220,6 +221,7 @@ async function main() {
           { command: 'subscribe', description: '➕ Підписатись на об’єкт' },
           { command: 'unsubscribe', description: '➖ Відписатись' },
           { command: 'mysubs', description: '📌 Мої підписки' },
+          { command: 'forgetme', description: '🗑 Видалити мої дані' },
           { command: 'status', description: '🔋 Поточний стан' },
           { command: 'graph', description: '📊 Графік за 24 години' },
           { command: 'help', description: 'ℹ️ Список команд' }
