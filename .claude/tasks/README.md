@@ -111,8 +111,8 @@
 | 19 | [Приймання вебхука від Grafana](19-grafana-webhook.md) | ☑ |
 | 20 | [Персональна розсилка алертів](20-alert-fanout.md) | ☑ |
 | 21 | [Перевести Grafana на вебхук](21-grafana-to-webhook.md) | ☑ |
-| 22 | [Вхід у адмінку: пароль, сесія, CSRF](22-admin-auth.md) | ☐ |
-| 23 | [Веб-адмінка: список і схвалення](23-admin-web.md) | ☐ |
+| 22 | [Вхід у адмінку: пароль, сесія, CSRF](22-admin-auth.md) | ☑ |
+| 23 | [Веб-адмінка: список і схвалення](23-admin-web.md) | ☑ |
 | 24 | [Бекап, секрети, документація](24-backup-secrets-docs.md) | ☐ |
 
 Повний план фази — `~/.claude/plans/radiant-bubbling-seal.md`.
