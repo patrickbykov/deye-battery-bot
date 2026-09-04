@@ -30,9 +30,11 @@ const CSS = `
 
   .board{list-style:none;margin:0;padding:0;
     border:1px solid var(--rule);border-radius:10px;background:var(--panel);overflow:hidden}
-  .line{display:grid;gap:.25rem .9rem;padding:.9rem 1rem;
-    grid-template-columns:auto 1fr auto;align-items:start}
+  /* Flex, а не grid: рядок має рівно три частини й жодних вимог до
+     вирівнювання по колонках між рядками. Grid тут лише плутав розкладку. */
+  .line{display:flex;align-items:flex-start;gap:.9rem;padding:.95rem 1rem}
   .line + .line{border-top:1px solid var(--rule)}
+  .body{flex:1 1 auto;min-width:0}
 
   /* Лампа — індикатор стану, а не прикраса: колір несе інформацію. */
   .lamp{width:.6rem;height:.6rem;border-radius:50%;margin-top:.45rem;
@@ -45,20 +47,21 @@ const CSS = `
   .meta{color:var(--ink-2);font-size:.875rem}
   /* Моноширинний лише для ідентифікаторів: там важливе вирівнювання цифр. */
   .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;color:var(--ink-2)}
-  .objects{grid-column:2;margin:.15rem 0 0;padding:0;list-style:none;
+  .objects{margin:.4rem 0 0;padding:0;list-style:none;
     display:flex;flex-wrap:wrap;gap:.3rem}
   .objects li{border:1px solid var(--rule);border-radius:999px;
     padding:.1rem .55rem;font-size:.8rem;color:var(--ink-2)}
-  .state{grid-column:2;font-size:.8rem;margin-top:.25rem;
-    display:flex;flex-wrap:wrap;gap:.1rem 1rem;color:var(--ink-2)}
-  .state .now{color:var(--off)}
-  .pending .state .now{color:var(--wait)}
-  .approved .state .now{color:var(--live)}
+  .when{font-size:.8rem;margin-top:.35rem;color:var(--ink-2)}
 
   /* Перемикач — справжній checkbox: без JS він мусить лишатись доступним
      з клавіатури, тож фокус видно завжди. */
-  .sw{grid-row:1/span 4;align-self:center;display:inline-flex;align-items:center;
-    gap:.5rem;cursor:pointer;font-size:.85rem;color:var(--ink-2);white-space:nowrap}
+  /* Стан і рішення — одне й те саме, тож підпис перемикача і є станом.
+     Окремий рядок «чекає рішення» лише дублював би лампу. */
+  .sw{flex:0 0 auto;align-self:center;display:flex;flex-direction:column;
+    align-items:center;gap:.35rem;cursor:pointer;font-size:.75rem;
+    color:var(--off);white-space:nowrap}
+  .pending .sw{color:var(--wait)}
+  .approved .sw{color:var(--live)}
   .sw input{appearance:none;-webkit-appearance:none;margin:0;
     width:2.6rem;height:1.5rem;border-radius:999px;border:1px solid var(--rule);
     background:color-mix(in srgb,var(--off) 22%,transparent);position:relative;
@@ -80,14 +83,20 @@ const CSS = `
     color:var(--ink-2);text-align:center}
 
   .login{max-width:22rem;margin:12vh auto 0}
+  .login h1{margin-bottom:1.5rem}
+  .login label{display:block;font-size:.85rem;color:var(--ink-2);margin-bottom:.35rem}
   .login p{margin:0 0 1rem}
   input[type=password]{font:inherit;width:100%;padding:.7rem .8rem;border-radius:8px;
     border:1px solid var(--rule);background:var(--panel);color:var(--ink)}
   input[type=password]:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
   .error{color:var(--wait)}
   @media (max-width:34rem){
-    .line{grid-template-columns:auto 1fr}
-    .sw{grid-row:auto;grid-column:2;justify-self:start;margin-top:.5rem}
+    /* width:100% змушує перемикач переноситись на власний рядок завжди.
+       Без цього він втискався збоку у вузьких рядках і з'їжджав під низ
+       у широких — сусідні рядки виглядали по-різному. */
+    .line{flex-wrap:wrap}
+    .sw{flex-direction:row;align-self:flex-start;width:100%;
+        justify-content:flex-start;margin-left:1.5rem;gap:.6rem}
   }
 `;
 
@@ -110,17 +119,28 @@ function whenApplied(value) {
   });
 }
 
-const STATE_LABEL = { pending: 'чекає рішення', approved: 'має доступ', rejected: 'без доступу' };
+const STATE_LABEL = { pending: 'чекає', approved: 'має доступ', rejected: 'без доступу' };
+
+// Українська множина: 1 заявка, 2-4 заявки, 5+ заявок.
+function plural(n, one, few, many) {
+  const d = n % 10, h = n % 100;
+  if (d === 1 && h !== 11) return one;
+  if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return few;
+  return many;
+}
 
 export function loginPage({ error } = {}) {
   // Без параметра next: open redirect на публічному ендпойнті не вартий
   // зручності. Після входу — завжди /admin/users.
   return page('Вхід', `<div class="login">
     <h1>Доступ до об’єктів</h1>
-    ${error ? `<p class="error">${esc(error)}</p>` : '<p class="tally">Введіть пароль адміністратора.</p>'}
+    ${error ? `<p class="error">${esc(error)}</p>` : ''}
     <form method="post" action="/admin/login">
-      <p><input type="password" name="password" autocomplete="current-password"
-                aria-label="Пароль" autofocus required></p>
+      <p>
+        <label for="pw">Пароль адміністратора</label>
+        <input id="pw" type="password" name="password" autocomplete="current-password"
+               autofocus required>
+      </p>
       <p><button type="submit">Увійти</button></p>
     </form>
   </div>`);
@@ -131,7 +151,7 @@ export function usersPage({ users, csrf }) {
 
   const tally = users.length === 0 ? ''
     : waiting > 0
-      ? `<p class="tally"><b>${waiting}</b> ${waiting === 1 ? 'заявка чекає' : 'заявок чекає'} рішення</p>`
+      ? `<p class="tally"><b>${waiting}</b> ${plural(waiting, 'заявка чекає', 'заявки чекають', 'заявок чекають')} рішення</p>`
       : '<p class="tally">Усі заявки розглянуті</p>';
 
   if (users.length === 0) {
@@ -146,21 +166,25 @@ export function usersPage({ users, csrf }) {
       ? `<ul class="objects">${user.inverters.map(i => `<li>${esc(i.name ?? i.id)}</li>`).join('')}</ul>`
       : '<ul class="objects"><li>об’єктів не обрано</li></ul>';
 
+    const plain = user.username ? '@' + user.username : (user.first_name ?? String(user.chat_id));
+    // Ім'я в підписі лише тоді, коли заголовок — нік. Інакше воно дублювало б
+    // сам заголовок.
+    const meta = user.username && user.first_name
+      ? `${esc(user.first_name)} <span class="id">${user.chat_id}</span>`
+      : `<span class="id">${user.chat_id}</span>`;
     return `<li class="line ${esc(user.status)}">
       <span class="lamp" aria-hidden="true"></span>
-      <div class="who">
+      <div class="body">
         <div class="nick">${nick}</div>
-        <div class="meta">${esc(user.first_name ?? '')} <span class="id">${user.chat_id}</span></div>
+        <div class="meta">${meta}</div>
+        ${objects}
+        <div class="when">${esc(whenApplied(user.requested_at))}</div>
       </div>
       <label class="sw">
-        <input type="checkbox" name="approve" value="${user.chat_id}"${user.status === 'approved' ? ' checked' : ''}>
-        <span>Доступ</span>
+        <input type="checkbox" name="approve" value="${user.chat_id}"${user.status === 'approved' ? ' checked' : ''}
+               aria-label="Доступ для ${esc(plain)}">
+        <span>${esc(STATE_LABEL[user.status] ?? user.status)}</span>
       </label>
-      ${objects}
-      <div class="state">
-        <span class="now">${esc(STATE_LABEL[user.status] ?? user.status)}</span>
-        <span>${esc(whenApplied(user.requested_at))}</span>
-      </div>
       <input type="hidden" name="known" value="${user.chat_id}">
     </li>`;
   }).join('');
