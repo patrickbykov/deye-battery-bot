@@ -18,10 +18,13 @@ import { queryGrafana, renderGrafanaPanel, getDashboardLink } from './grafana.js
 
 const store = createDb(DEFAULT_DB_PATH);
 
+const notifyAdmin = (msg, options) => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg, options) : Promise.resolve());
+
 const commands = createCommands({
   store,
   telegram: { sendMessage, sendPhoto },
   grafana: { queryGrafana, renderGrafanaPanel, getDashboardLink },
+  notifyAdmin,
   log: console,
 });
 
@@ -29,8 +32,6 @@ const commands = createCommands({
 // щосекунди: рендер Grafana — метрована операція на Free-плані.
 const commandThrottle = {};
 const COMMAND_LIMITS = { windowMs: 5 * 60_000, perKeyLimit: 30, globalLimit: 300 };
-
-const notifyAdmin = (msg, options) => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg, options) : Promise.resolve());
 
 const callbacks = createCallbacks({
   store,

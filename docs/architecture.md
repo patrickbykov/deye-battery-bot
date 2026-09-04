@@ -129,7 +129,7 @@ grid,inverter=<SN>    voltage,frequency,power                        (усі flo
 виміру брехала б. `grid.voltage` — **максимум трьох фаз**: втрата однієї фази
 не є блекаутом.
 
-## Схема SQLite (`user_version = 2`)
+## Схема SQLite (`user_version = 3`)
 
 ```
 inverters(id PK, name, dashboard_uid, panel_id, discovered_at)
@@ -138,9 +138,10 @@ users(chat_id PK, username, first_name, status, requested_at, created_at, decide
 subscriptions(chat_id → users, inverter_id → inverters, subscribed_at)  PK (chat_id, inverter_id)
 alert_deliveries(dedup_key, chat_id, delivered_at)                      PK (dedup_key, chat_id)
 ignored_inverters(id PK, ignored_at)                                    -- надгробки, v2
+invited(username PK, note, invited_at)                                  -- запрошення, v3
 ```
 
-Чотири рішення, які легко зробити інакше й потім довго шукати причину:
+П'ять рішень, які легко зробити інакше й потім довго шукати причину:
 
 - **`idx_subs_inverter`.** PK веде за `chat_id`, тож для `WHERE inverter_id = ?`
   він непридатний — був би full scan усередині вебхука.
@@ -150,6 +151,11 @@ ignored_inverters(id PK, ignored_at)                                    -- на�
 - **`ignored_inverters`.** Без надгробків discovery повертав видалений
   інвертор наступним циклом: тег живе в InfluxDB до кінця retention, тож
   адмінське видалення мовчки скасовувалось за пʼять хвилин.
+- **`invited.username` у нижньому регістрі.** `TEXT PRIMARY KEY` у SQLite
+  порівнюється побайтно, а Telegram віддає нік у тому регістрі, який людина
+  набрала в профілі: без `lower()` запрошення для `@Petro` не знайшлося б за
+  ніком `petro`. Витрата — `DELETE … RETURNING` одним кроком, щоб дві заявки
+  поспіль не з'їли одне запрошення двічі.
 - **Кому слати вирішується рівно в одному місці**, і воно одразу з фільтром:
   ```sql
   SELECT s.chat_id FROM subscriptions s
@@ -169,7 +175,7 @@ ignored_inverters(id PK, ignored_at)                                    -- на�
 | GET | `/admin` | — форма логіну |
 | POST | `/admin/login` | тротлінг |
 | GET | `/admin/users`, `/admin/objects` | сесійна cookie |
-| POST | `/admin/users`, `/admin/inverters`, `/admin/logout` | cookie + CSRF |
+| POST | `/admin/users`, `/admin/inverters`, `/admin/invites`, `/admin/logout` | cookie + CSRF |
 | GET | `/admin/export.json` | cookie |
 | — | решта | 404; відомий шлях з іншим методом → 405 |
 

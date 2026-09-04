@@ -35,6 +35,7 @@ function harness() {
 
   const sent = [];
   const photos = [];
+  const adminMsgs = [];
   const commands = createCommands({
     store,
     telegram: {
@@ -49,10 +50,11 @@ function harness() {
       renderGrafanaPanel: async () => Buffer.from('png'),
       getDashboardLink: inv => `https://g/d/${inv.dashboard_uid}`,
     },
+    notifyAdmin: async msg => adminMsgs.push(msg),
     log: { info() {}, warn() {}, error() {} },
     sleep: () => Promise.resolve(),
   });
-  return { store, commands, sent, photos, ctx: { chatId: 7 } };
+  return { store, commands, sent, photos, adminMsgs, ctx: { chatId: 7 } };
 }
 
 test('/list показує всі інвертори з БД', async () => {
@@ -169,20 +171,20 @@ function cbHarness() {
   const store = createDb(':memory:');
   store.upsertInverter('INV1', 'Перший', 'DASH');
   store.upsertInverter('INV2', 'Другий', 'DASH');
-  const edits = [], toasts = [], adminMsgs = [], texts = [];
+  const edits = [], toasts = [], adminMsgs = [], adminOpts = [], texts = [], sent = [];
   const callbacks = createCallbacks({
     store,
     telegram: {
       editMessageReplyMarkup: async (c, m, markup) => edits.push(markup),
       editMessageText: async (c, m, text) => texts.push(text),
       answerCallbackQuery: async (id, text) => toasts.push(text),
-      sendMessage: async () => {},
+      sendMessage: async (chatId, text) => sent.push({ chatId, text }),
     },
-    notifyAdmin: async msg => adminMsgs.push(msg),
+    notifyAdmin: async (msg, opts) => { adminMsgs.push(msg); adminOpts.push(opts); },
     log: { info() {}, warn() {}, error() {} },
   });
   const inverters = store.getAllInverters();
-  return { store, callbacks, edits, toasts, adminMsgs, texts, inverters };
+  return { store, callbacks, edits, toasts, adminMsgs, adminOpts, texts, sent, inverters };
 }
 
 const ctx = (markup, from = { id: 5, username: 'petro', first_name: 'Петро' }) => ({
@@ -467,4 +469,123 @@ test('збій запиту мережі не забирає стан батар
   await commands.get('/status')({ chatId: 7 });
   assert.match(sent[0], /SOC/);
   assert.doesNotMatch(sent[0], /Мережа/);
+});
+
+// --- Запрошені ніки ---
+
+test('заявка від запрошеного схвалюється без адміна', async () => {
+  const { callbacks, store, inverters } = cbHarness();
+  store.addInvited('petro', 'Клочківська');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+
+  assert.equal(store.getUser(5).status, 'approved');
+  assert.match(store.getUser(5).decided_by, /invite/);
+});
+
+test('запрошення шукається незалежно від регістру ніка в Telegram', async () => {
+  const { callbacks, store, inverters } = cbHarness();
+  store.addInvited('petro');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1']),
+    { id: 5, username: 'Petro', first_name: 'Петро' }));
+
+  assert.equal(store.getUser(5).status, 'approved');
+});
+
+test('запрошення витрачається першою ж заявкою', async () => {
+  // Без цього правило «зміна набору обʼєктів іде на розгляд» перестало б
+  // діяти для запрошених: людина мовчки додала б собі чужий будинок.
+  const { callbacks, store, inverters } = cbHarness();
+  store.addInvited('petro');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1', 'INV2'])));
+
+  assert.equal(store.getUser(5).status, 'pending');
+  assert.deepEqual(store.listInvited(), []);
+});
+
+test('запрошений одразу читає, що доступ відкрито', async () => {
+  const { callbacks, store, texts, inverters } = cbHarness();
+  store.addInvited('petro');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+
+  assert.match(texts[0], /доступ відкрито/i);
+  assert.doesNotMatch(texts[0], /на розгляд/i);
+});
+
+test('про автосхвалення адміну повідомляють, але без кнопок рішення', async () => {
+  // Слід рішення має лишатись: адмін мусить бачити, кого впустило
+  // запрошення, навіть якщо його не питали.
+  const { callbacks, store, adminMsgs, adminOpts, inverters } = cbHarness();
+  store.addInvited('petro');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+
+  assert.match(adminMsgs[0], /запрош/i);
+  assert.equal(adminOpts[0]?.reply_markup, undefined);
+});
+
+test('заявка від незапрошеного все одно йде з кнопками рішення', async () => {
+  const { callbacks, store, adminOpts, inverters } = cbHarness();
+  store.addInvited('somebody_else');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+
+  assert.equal(store.getUser(5).status, 'pending');
+  assert.ok(adminOpts[0]?.reply_markup, 'адмін мусить мати чим вирішити');
+  assert.equal(store.listInvited().length, 1, 'чуже запрошення не витрачено');
+});
+
+test('людина без ніка в Telegram не ламає заявку', async () => {
+  const { callbacks, store, inverters } = cbHarness();
+  store.addInvited('petro');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1']),
+    { id: 5, username: undefined, first_name: 'Без ніка' }));
+
+  assert.equal(store.getUser(5).status, 'pending');
+  assert.equal(store.listInvited().length, 1);
+});
+
+test('текстовий /subscribe теж витрачає запрошення', async () => {
+  // Другий шлях подачі заявки. Якби запрошення тут не спрацьовувало,
+  // воно мовчки не діяло б для тих, хто підписується за id.
+  const { commands, store } = harness();
+  store.setUserStatus(7, 'pending', 'test');
+  store.addInvited('petro');
+
+  await commands.get('/subscribe')({
+    chatId: 7, arg: 'INV1', from: { username: 'petro', first_name: 'Петро' },
+  });
+
+  assert.equal(store.getUser(7).status, 'approved');
+  assert.deepEqual(store.listInvited(), []);
+});
+
+test('текстовий /subscribe теж лишає слід автосхвалення в адміна', async () => {
+  // Інакше запрошення витрачалось би зовсім безшумно: людина отримує доступ,
+  // а адмін дізнається про це, лише відкривши адмінку.
+  const { commands, store, adminMsgs } = harness();
+  store.setUserStatus(7, 'pending', 'test');
+  store.addInvited('petro');
+
+  await commands.get('/subscribe')({
+    chatId: 7, arg: 'INV1', from: { username: 'petro', first_name: 'Петро' },
+  });
+
+  assert.match(adminMsgs.join(' '), /запрош/i);
+});
+
+test('звичайний текстовий /subscribe адміна не смикає', async () => {
+  const { commands, store, adminMsgs } = harness();
+  store.setUserStatus(7, 'pending', 'test');
+
+  await commands.get('/subscribe')({
+    chatId: 7, arg: 'INV1', from: { username: 'petro', first_name: 'Петро' },
+  });
+
+  assert.deepEqual(adminMsgs, []);
 });

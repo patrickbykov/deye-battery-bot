@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -82,4 +82,34 @@ test('gridPresent: без даних — не вигадуємо відпові�
   assert.equal(gridPresent(null), null);
   assert.equal(gridPresent(undefined), null);
   assert.equal(gridPresent('abc'), null);
+});
+
+test('normalizeUsername зрізає @ і зводить до нижнього регістру', () => {
+  // Ніки в Telegram регістронезалежні, а зберігаємо ми їх як PRIMARY KEY
+  // з BINARY-колацією: без нормалізації '@Petro' і 'petro' були б різними
+  // записами, і запрошення не спрацювало б.
+  assert.equal(normalizeUsername('@Petro_Bykov'), 'petro_bykov');
+});
+
+test('normalizeUsername терпить пробіли навколо', () => {
+  assert.equal(normalizeUsername('  volunteer  '), 'volunteer');
+});
+
+test('normalizeUsername відхиляє нік, коротший за 5 символів', () => {
+  assert.equal(normalizeUsername('abcd'), null);
+});
+
+test('normalizeUsername відхиляє нік, довший за 32 символи', () => {
+  assert.equal(normalizeUsername('a'.repeat(33)), null);
+});
+
+test('normalizeUsername відхиляє нік, що починається не з літери', () => {
+  assert.equal(normalizeUsername('1volunteer'), null);
+});
+
+test('normalizeUsername відхиляє недозволені символи', () => {
+  // Порожній рядок і посилання: адмін цілком може вставити t.me/nick.
+  assert.equal(normalizeUsername('t.me/volunteer'), null);
+  assert.equal(normalizeUsername(''), null);
+  assert.equal(normalizeUsername(null), null);
 });

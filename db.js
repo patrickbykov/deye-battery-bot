@@ -8,7 +8,7 @@ export const DEFAULT_DB_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)), 'data', 'bot.db'
 );
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // strftime з явним 'Z', а не datetime('now'). Останній віддає
 // '2026-09-03 12:00:00' — без зони й без 'T', і new Date() читає такий рядок
@@ -67,6 +67,17 @@ const SCHEMA_V2 = `
   );
 `;
 
+// Запрошення: адмін наперед називає нік, і перша заявка від цієї людини
+// схвалюється без його участі. Нік, а не chat_id, бо chat_id за ніком не
+// дізнатись — Bot API такого не дає, і бот не може написати першим.
+const SCHEMA_V3 = `
+  CREATE TABLE IF NOT EXISTS invited (
+    username   TEXT PRIMARY KEY,
+    note       TEXT,
+    invited_at TEXT NOT NULL DEFAULT (${NOW})
+  );
+`;
+
 export function migrate(db) {
   const current = db.pragma('user_version', { simple: true });
   if (current === SCHEMA_VERSION) return;
@@ -79,6 +90,7 @@ export function migrate(db) {
       db.exec(SCHEMA_V1);
     }
     if (current <= 1) db.exec(SCHEMA_V2);
+    if (current <= 2) db.exec(SCHEMA_V3);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -129,6 +141,31 @@ export function createDb(filename) {
       db.prepare('DELETE FROM inverters WHERE id = ?').run(id);
       db.prepare('INSERT OR IGNORE INTO ignored_inverters (id) VALUES (?)').run(id);
     })(),
+
+    // --- Запрошення ---
+    // Регістр зводимо тут, а не лише на вході в адмінку: нижній регістр —
+    // інваріант самої колонки, бо PRIMARY KEY у SQLite порівнюється побайтно,
+    // а Telegram віддає нік у тому регістрі, який людина набрала в профілі.
+    listInvited: () =>
+      db.prepare('SELECT * FROM invited ORDER BY username').all(),
+
+    addInvited: (username, note = null) =>
+      db.prepare(`
+        INSERT INTO invited (username, note) VALUES (lower(?), ?)
+        ON CONFLICT(username) DO UPDATE SET note = excluded.note
+      `).run(String(username ?? ''), note),
+
+    removeInvited: username =>
+      db.prepare('DELETE FROM invited WHERE username = lower(?)').run(String(username ?? '')),
+
+    // DELETE ... RETURNING: перевірка й витрата одним кроком. Двома запитами
+    // між ними лишалась би мить, у якій дві заявки поспіль з'їли б одне
+    // запрошення двічі.
+    consumeInvite: username => {
+      const clean = String(username ?? '').trim();
+      if (clean === '') return undefined;
+      return db.prepare('DELETE FROM invited WHERE username = lower(?) RETURNING *').get(clean);
+    },
 
     // --- Доставка алертів ---
     // Вікно, а не вічний ключ: Grafana повторює сповіщення для алерту, що
@@ -207,6 +244,7 @@ export function createDb(filename) {
       subscriptions: db.prepare('SELECT * FROM subscriptions ORDER BY chat_id, inverter_id').all(),
       inverters: db.prepare('SELECT * FROM inverters ORDER BY id').all(),
       ignoredInverters: db.prepare('SELECT * FROM ignored_inverters ORDER BY id').all(),
+      invited: db.prepare('SELECT * FROM invited ORDER BY username').all(),
     }),
 
     // --- Subscriptions ---

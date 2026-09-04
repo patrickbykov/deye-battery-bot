@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readBody } from './http-server.js';
+import { normalizeUsername } from './helpers.js';
 import { loginPage, usersPage, objectsPage } from './admin-views.js';
 import {
   verifyPassword, deriveKeys, signSession, verifySession, csrfToken, csrfValid, throttleDecision,
@@ -96,6 +97,7 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
     { method: 'GET', path: '/admin/users', handler: guard(async (req, res, { session: s }) => {
       html(res, 200, usersPage({
         users: store.listUsersWithSubscriptions(),
+        invited: store.listInvited(),
         csrf: csrfToken(s.sid, keys.csrf),
       }));
     }) },
@@ -142,6 +144,45 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
           store.setUserStatus(chatId, wanted, 'web');
           log.info(`Адмінка: chat:${chatId} → ${wanted}`);
         }
+      }
+      redirect(res, '/admin/users');
+    }) },
+
+    { method: 'POST', path: '/admin/invites', handler: guard(async (req, res, { session: s }) => {
+      const form = await readForm(req);
+      if (!csrfValid(s.sid, form.get('csrf'), keys.csrf)) {
+        return html(res, 403, '<p>Недійсний токен форми. Оновіть сторінку.</p>');
+      }
+
+      // Розбір ДО будь-якого запису: інакше сторінка з помилкою показувала б
+      // список, у якому зняті чекбокси вже спрацювали, а нік — ні.
+      const raw = String(form.get('username') ?? '').trim();
+      const username = raw === '' ? null : normalizeUsername(raw);
+      if (raw !== '' && !username) {
+        return html(res, 400, usersPage({
+          users: store.listUsersWithSubscriptions(),
+          invited: store.listInvited(),
+          csrf: csrfToken(s.sid, keys.csrf),
+          inviteError: `«${raw}» не схоже на нік у Telegram: 5–32 символи, `
+            + 'літери, цифри й підкреслення, починається з літери.',
+        }));
+      }
+
+      // Знятий чекбокс прибирає запрошення. Звіряємось із тим, що зараз у БД,
+      // а не з прихованим списком: запрошення, витрачене чиєюсь заявкою поки
+      // сторінка була відкрита, вже зникло, і прибирати його нема потреби.
+      // Нік із цієї ж форми в keep[] відсутній за побудовою, тож додаємо
+      // його ПІСЛЯ прибирання — інакше форма з'їдала б власний внесок.
+      const keep = new Set(form.all('keep'));
+      for (const invite of store.listInvited()) {
+        if (keep.has(invite.username)) continue;
+        store.removeInvited(invite.username);
+        log.info(`Адмінка: запрошення @${invite.username} прибрано`);
+      }
+
+      if (username) {
+        store.addInvited(username, String(form.get('note') ?? '').trim() || null);
+        log.info(`Адмінка: запрошено @${username}`);
       }
       redirect(res, '/admin/users');
     }) },

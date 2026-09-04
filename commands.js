@@ -17,7 +17,24 @@ export function parseCommand(text) {
   return { cmd: match[1].toLowerCase(), arg: match[2] };
 }
 
-export function createCommands({ store, telegram, grafana, log, sleep = defaultSleep }) {
+// Один хелпер на обидва шляхи подачі заявки — з клавіатури й текстовий
+// /subscribe <id>. Якби запрошення спрацьовувало лише в одному, воно мовчки
+// не діяло б для тих, хто підписався іншим способом.
+// Викликати ЛИШЕ після replaceSubscriptions: та транзакція сама ставить
+// pending, тож схвалення до неї одразу ж затерлося б.
+function applyInvite(store, chatId, from, log) {
+  const invite = store.consumeInvite(from?.username);
+  if (!invite) return false;
+  store.setUserStatus(chatId, 'approved', 'invite');
+  log.info(`Запрошення @${invite.username} витрачено: chat:${chatId} схвалено автоматично`);
+  return true;
+}
+
+// notifyAdmin за замовчуванням нічого не робить: більшість команд адміна не
+// стосуються, і тести решти шляхів не мають бути змушені його підставляти.
+export function createCommands({
+  store, telegram, grafana, log, notifyAdmin = async () => {}, sleep = defaultSleep,
+}) {
   const { sendMessage, sendPhoto } = telegram;
   const { queryGrafana, renderGrafanaPanel, getDashboardLink } = grafana;
 
@@ -181,7 +198,16 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
     ensureUser({ chatId, from });
     const current = store.getSubscriptions(chatId).map(i => i.id);
     store.replaceSubscriptions(chatId, [...new Set([...current, inverter.id])]);
-    await sendMessage(chatId, `✅ Підписано на ${inverter.name}`);
+    const invited = applyInvite(store, chatId, from, log);
+    await sendMessage(chatId, `✅ Підписано на ${inverter.name}` +
+      (invited ? '\n\nДоступ відкрито — вас було запрошено.' : ''));
+    // Слід рішення потрібен і тут: цей шлях адміну нічого не шле, і без
+    // рядка нижче запрошення витрачалось би зовсім безшумно.
+    if (invited) {
+      const who = from?.username ? '@' + escapeHtml(from.username) : escapeHtml(from?.first_name ?? chatId);
+      await notifyAdmin(`✅ <b>Запрошений увійшов</b>\n\n${who}\nОбʼєкт: ${escapeHtml(inverter.name)}`
+        + '\nСхвалено автоматично: нік був у списку запрошених.');
+    }
   });
 
   handlers.set('/unsubscribe', async ({ chatId, arg, from }) => {
@@ -318,17 +344,26 @@ export function createCallbacks({ store, telegram, notifyAdmin, log, adminChatId
     store.upsertUser(chatId, from?.username ?? null, from?.first_name ?? null);
     // Транзакція всередині: набір і скидання статусу в pending нероздільні.
     store.replaceSubscriptions(chatId, chosen.map(i => i.id));
+    // Строго після: replaceSubscriptions ставить pending, тож схвалення
+    // до неї не пережило б власну ж заявку.
+    const invited = applyInvite(store, chatId, from, log);
 
-    await telegram.editMessageText(chatId, messageId,
-      `📨 Заявку надіслано на розгляд.\n\nОбрані об’єкти:\n${chosen.map(i => `• ${escapeHtml(i.name)}`).join('\n')}\n\nСповіщення надходитимуть після схвалення.`);
-    await telegram.answerCallbackQuery(callbackId, 'Заявку надіслано');
+    const objects = chosen.map(i => `• ${escapeHtml(i.name)}`).join('\n');
+    await telegram.editMessageText(chatId, messageId, invited
+      ? `✅ Доступ відкрито.\n\nОбрані об’єкти:\n${objects}\n\n/status — поточний стан, /graph — графік.`
+      : `📨 Заявку надіслано на розгляд.\n\nОбрані об’єкти:\n${objects}\n\nСповіщення надходитимуть після схвалення.`);
+    await telegram.answerCallbackQuery(callbackId, invited ? 'Доступ відкрито' : 'Заявку надіслано');
 
     // Ім'я обирає сама людина, тож воно може містити '<' — і тоді Telegram
     // відхилив би повідомлення адміну цілком з 400.
     const who = from?.username ? '@' + escapeHtml(from.username) : escapeHtml(from?.first_name ?? chatId);
-    await notifyAdmin(
-      `🆕 <b>Нова заявка</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${chosen.map(i => escapeHtml(i.name)).join(', ')}`,
-      { reply_markup: { inline_keyboard: [[
+    const objectNames = chosen.map(i => escapeHtml(i.name)).join(', ');
+    // Автосхвалення все одно доходить до адміна — інакше зникає слід рішення.
+    // Але без кнопок: вирішувати вже нічого.
+    await notifyAdmin(invited
+      ? `✅ <b>Запрошений увійшов</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${objectNames}\nСхвалено автоматично: нік був у списку запрошених.`
+      : `🆕 <b>Нова заявка</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${objectNames}`,
+      invited ? undefined : { reply_markup: { inline_keyboard: [[
         { text: '✅ Схвалити', callback_data: `a:ok:${chatId}` },
         { text: '🚫 Відхилити', callback_data: `a:no:${chatId}` },
       ]] } });

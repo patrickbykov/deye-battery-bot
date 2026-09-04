@@ -107,6 +107,16 @@ const CSS = `
   .obj input[type=text]:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
   .obj .id{flex:0 0 auto}
 
+  /* Запрошення: чекбокс «лишити» замість окремої кнопки видалення на
+     кожен рядок. Той самий жест, що й перемикач доступу вище на сторінці. */
+  .keep{display:flex;align-items:center;gap:.55rem;cursor:pointer;flex:0 0 auto}
+  .keep input{appearance:auto;width:1.1rem;height:1.1rem;margin:0;accent-color:var(--live)}
+  .keep input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+  .obj .note{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;
+    color:var(--ink-2);font-size:.875rem}
+  .obj.new{gap:.6rem;flex-wrap:wrap}
+  .obj.new input[type=text]{flex:1 1 9rem}
+
   .login{max-width:22rem;margin:12vh auto 0}
   .login h1{margin-bottom:1.5rem}
   .login label{display:block;font-size:.85rem;color:var(--ink-2);margin-bottom:.35rem}
@@ -213,19 +223,55 @@ export function objectsPage({ inverters, csrf, waiting = 0 }) {
     ${body}`);
 }
 
-export function usersPage({ users, csrf }) {
+// Секція, а не третя вкладка: кілька ніків не варті власної сторінки, а
+// стоять вони там само, де адмін і так вирішує про доступ.
+function invitedSection({ invited = [], csrf, error }) {
+  const rows = invited.map(inv => `<li class="obj">
+    <label class="keep">
+      <input type="checkbox" name="keep" value="${esc(inv.username)}" checked
+             aria-label="Лишити запрошення для ${esc('@' + inv.username)}">
+      <span class="nick">@${esc(inv.username)}</span>
+    </label>
+    <span class="note">${esc(inv.note ?? '')}</span>
+  </li>`).join('');
+
+  return `<h2>Запрошені</h2>
+    <p class="hint">Коли людина з таким ніком надішле заявку, її схвалять
+      автоматично. Спрацьовує один раз: наступна зміна набору обʼєктів
+      піде на розгляд, як у всіх.</p>
+    ${error ? `<p class="error">${esc(error)}</p>` : ''}
+    <form method="post" action="/admin/invites">
+      <input type="hidden" name="csrf" value="${esc(csrf)}">
+      <ul class="board">${rows}<li class="obj new">
+        <input type="text" name="username" placeholder="@нік у Telegram"
+               aria-label="Нік у Telegram" maxlength="33" autocomplete="off">
+        <input type="text" name="note" placeholder="навіщо — щоб не забути"
+               aria-label="Примітка" maxlength="60" autocomplete="off">
+      </li></ul>
+      <div class="actions">
+        <button type="submit">Зберегти запрошення</button>
+        ${rows ? '<span class="tally">Знятий чекбокс прибирає запрошення.</span>' : ''}
+      </div>
+    </form>`;
+}
+
+export function usersPage({ users, invited = [], csrf, inviteError }) {
   const waiting = users.filter(u => u.status === 'pending').length;
+  const invites = invitedSection({ invited, csrf, error: inviteError });
 
   const tally = users.length === 0 ? ''
     : waiting > 0
       ? `<p class="tally"><b>${waiting}</b> ${plural(waiting, 'заявка чекає', 'заявки чекають', 'заявок чекають')} рішення</p>`
       : '<p class="tally">Усі заявки розглянуті</p>';
 
+  // Запрошення потрібне й тоді, коли користувачів ще немає — власне, тоді
+  // найбільше: писати боту нікому, бо про нього ще ніхто не знає.
   if (users.length === 0) {
     return page('Користувачі', `
       ${nav('/admin/users', csrf, 0)}
       <header><h1>Користувачі</h1></header>
-      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>`);
+      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>
+      ${invites}`);
   }
 
   const lines = users.map(user => {
@@ -273,5 +319,6 @@ export function usersPage({ users, csrf }) {
         <span class="tally">Вимкнений перемикач знімає доступ.</span>
       </div>
     </form>
+    ${invites}
 `);
 }

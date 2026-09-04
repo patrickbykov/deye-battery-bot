@@ -75,3 +75,14 @@ export function gridPresent(voltage) {
   if (voltage === null || voltage === undefined || !Number.isFinite(volts)) return null;
   return volts >= GRID_PRESENT_VOLTS;
 }
+
+// Ніки в Telegram регістронезалежні, а зберігаємо ми їх як TEXT PRIMARY KEY
+// з BINARY-колацією: без зведення до нижнього регістру '@Petro' і 'petro'
+// стали б різними записами, і запрошення не спрацювало б.
+// Правила самого Telegram: 5-32 символи, літери/цифри/підкреслення,
+// починається з літери. null означає «це не нік» — рішення про текст
+// помилки лишається за викликачем.
+export function normalizeUsername(value) {
+  const clean = String(value ?? '').trim().replace(/^@/, '').toLowerCase();
+  return /^[a-z][a-z0-9_]{4,31}$/.test(clean) ? clean : null;
+}

@@ -118,3 +118,52 @@ test('без обʼєктів сторінка пояснює, звідки во
   assert.doesNotMatch(html, /name="name:/);
   assert.match(html, /колектор|InfluxDB|зʼявля/i);
 });
+
+// --- Запрошені ---
+
+const invited = [{ username: 'volunteer', note: 'Клочківська, сусід' }];
+
+test('форма запрошення є на сторінці користувачів', () => {
+  const html = usersPage({ users, invited, csrf: 'tok' });
+  assert.match(html, /action="\/admin\/invites"/);
+  assert.match(html, /name="username"/);
+});
+
+test('запрошення видно разом із приміткою — щоб адмін памʼятав, кого кликав', () => {
+  const html = usersPage({ users, invited, csrf: 'tok' });
+  assert.match(html, /volunteer/);
+  assert.match(html, /Клочківська, сусід/);
+});
+
+test('кожен запрошений має відмічений чекбокс — знятий прибирає його', () => {
+  assert.match(usersPage({ users, invited, csrf: 'tok' }),
+    /name="keep" value="volunteer" checked/);
+});
+
+test('форма запрошення є і тоді, коли користувачів ще немає', () => {
+  // Саме тоді вона потрібна найбільше: кликати нікого, бо ніхто не писав.
+  assert.match(usersPage({ users: [], invited: [], csrf: 'tok' }),
+    /action="\/admin\/invites"/);
+});
+
+test('нік і примітка запрошеного екрануються', () => {
+  const evil = [{ username: '<script>alert(1)</script>', note: '"><b>' }];
+  const html = usersPage({ users, invited: evil, csrf: 'tok' });
+  assert.doesNotMatch(html, /<script/i);
+  assert.match(html, /&lt;script&gt;/);
+});
+
+test('помилка розбору ніка показується на самій сторінці', () => {
+  const html = usersPage({ users, invited, csrf: 'tok', inviteError: 'Це не схоже на нік.' });
+  assert.match(html, /Це не схоже на нік\./);
+});
+
+test('без запрошень секція пояснює, навіщо вона', () => {
+  const html = usersPage({ users, invited: [], csrf: 'tok' });
+  assert.doesNotMatch(html, /name="keep"/);
+  assert.match(html, /автоматично/i);
+});
+
+test('сторінка користувачів лишається без JavaScript із секцією запрошень', () => {
+  assert.doesNotMatch(usersPage({ users, invited, csrf: 'tok' }), /<script/i);
+});

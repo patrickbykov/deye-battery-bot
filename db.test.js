@@ -9,7 +9,7 @@ const tables = db => db.prepare(
 
 test('створює схему на порожній БД і ставить версію', () => {
   const store = createDb(':memory:');
-  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'ignored_inverters', 'inverters', 'subscriptions', 'users']);
+  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'ignored_inverters', 'inverters', 'invited', 'subscriptions', 'users']);
   assert.equal(store.raw.pragma('user_version', { simple: true }), SCHEMA_VERSION);
 });
 
@@ -148,4 +148,96 @@ test('discovery не затирає назву, задану адміном', ()
   store.renameInverter('INV1', 'Клочківська 117');
   store.upsertInverter('INV1', 'INV1', 'DASH');
   assert.equal(store.getInverter('INV1').name, 'Клочківська 117');
+});
+
+// --- Запрошені ніки ---
+
+test('додає запрошений нік і показує його в переліку', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer', 'Клочківська, сусід');
+  assert.deepEqual(
+    store.listInvited().map(r => [r.username, r.note]),
+    [['volunteer', 'Клочківська, сусід']]
+  );
+});
+
+test('запрошення зберігається в нижньому регістрі', () => {
+  // TEXT PRIMARY KEY у SQLite має BINARY-колацію, тож без цього '@Volunteer'
+  // від адміна ніколи б не збігся з ніком із Telegram.
+  const store = createDb(':memory:');
+  store.addInvited('Volunteer');
+  assert.equal(store.listInvited()[0].username, 'volunteer');
+});
+
+test('повторне запрошення того самого ніка оновлює примітку, а не дублює', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer', 'перша спроба');
+  store.addInvited('VOLUNTEER', 'Клочківська 117');
+  assert.equal(store.listInvited().length, 1);
+  assert.equal(store.listInvited()[0].note, 'Клочківська 117');
+});
+
+test('consumeInvite знаходить запрошення незалежно від регістру', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer');
+  assert.ok(store.consumeInvite('Volunteer'));
+});
+
+test('consumeInvite спрацьовує один раз — запрошення витрачається', () => {
+  // Одноразовість тримає правило «зміна набору обʼєктів іде на розгляд»:
+  // інакше людина, раз запрошена, мовчки підписалась би на будь-який
+  // чужий будинок.
+  const store = createDb(':memory:');
+  store.addInvited('volunteer');
+  assert.ok(store.consumeInvite('volunteer'));
+  assert.equal(store.consumeInvite('volunteer'), undefined);
+  assert.equal(store.listInvited().length, 0);
+});
+
+test('consumeInvite нічого не робить для незапрошеного ніка', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer');
+  assert.equal(store.consumeInvite('stranger'), undefined);
+  assert.equal(store.listInvited().length, 1, 'чуже запрошення лишилось цілим');
+});
+
+test('consumeInvite терпить відсутній нік — у Telegram він не обовʼязковий', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer');
+  assert.equal(store.consumeInvite(null), undefined);
+  assert.equal(store.consumeInvite(undefined), undefined);
+});
+
+test('прибирає запрошення', () => {
+  const store = createDb(':memory:');
+  store.addInvited('volunteer');
+  store.removeInvited('VOLUNTEER');
+  assert.deepEqual(store.listInvited(), []);
+});
+
+test('міграція з v2 додає invited і не чіпає наявні дані', () => {
+  // Жива база на волюмі саме в цьому стані, і єдиний спосіб її втратити —
+  // міграція, яка щось перестворює.
+  const raw = new Database(':memory:');
+  migrate(raw);
+  raw.exec("INSERT INTO users (chat_id, username, status) VALUES (7, 'petro', 'approved')");
+  raw.exec("INSERT INTO inverters (id, name) VALUES ('INV1', 'Клочківська 117')");
+  raw.exec("INSERT INTO subscriptions (chat_id, inverter_id) VALUES (7, 'INV1')");
+
+  raw.pragma('user_version = 2');
+  raw.exec('DROP TABLE invited');
+  migrate(raw);
+
+  assert.ok(tables(raw).includes('invited'));
+  assert.equal(raw.pragma('user_version', { simple: true }), SCHEMA_VERSION);
+  assert.equal(raw.prepare("SELECT status FROM users WHERE chat_id = 7").get().status, 'approved');
+  assert.equal(raw.prepare("SELECT name FROM inverters WHERE id = 'INV1'").get().name, 'Клочківська 117');
+  assert.equal(raw.prepare('SELECT count(*) n FROM subscriptions').get().n, 1);
+});
+
+test('дамп для бекапу містить запрошення', () => {
+  // Запрошення — теж рішення про доступ, і його не відновить ніщо.
+  const store = createDb(':memory:');
+  store.addInvited('volunteer', 'Клочківська');
+  assert.deepEqual(store.exportAll().invited.map(r => r.username), ['volunteer']);
 });
