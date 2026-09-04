@@ -1,9 +1,10 @@
 import fetch from 'node-fetch';
 import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, GRAFANA_WEBHOOK_TOKEN, TG_API, PORT } from './config.js';
-import { answerCallbackQuery, sendMessage, sendPhoto, editMessageReplyMarkup, editMessageText } from './telegram.js';
+import { answerCallbackQuery, sendMessage, sendPhoto, sendAlert, editMessageReplyMarkup, editMessageText } from './telegram.js';
 import { parseCommand, createCommands, createCallbacks } from './commands.js';
 import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
+import { createAlertQueue } from './alerts-queue.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer, readBody } from './http-server.js';
@@ -27,6 +28,14 @@ const callbacks = createCallbacks({
   telegram: { editMessageReplyMarkup, editMessageText, answerCallbackQuery, sendMessage },
   notifyAdmin,
   log: console,
+  adminChatId: ADMIN_CHAT_ID,
+});
+
+const alertQueue = createAlertQueue({
+  store,
+  send: sendAlert,
+  log: console,
+  sleep: ms => new Promise(r => setTimeout(r, ms)),
   adminChatId: ADMIN_CHAT_ID,
 });
 
@@ -193,6 +202,7 @@ const routes = [
       console.log(`Вебхук: ${alerts.length} алерт(ів)` +
         alerts.map(a => ` [${a.status} inverter=${a.inverterId ?? '—'}]`).join(''));
 
+      await alertQueue.deliver(alerts);
       res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
     },
   },

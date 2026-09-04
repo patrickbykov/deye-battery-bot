@@ -36,6 +36,27 @@ export async function sendMessage(chatId, text, options = {}) {
   }
 }
 
+// Окремо від sendMessage: розсилці потрібно РОЗРІЗНЯТИ причини відмови.
+// 429 означає «почекай і повтори», 403 — «людина видалила бота, більше не
+// намагайся». sendMessage обидва випадки просто ковтає в лог.
+export async function sendAlert(chatId, text) {
+  try {
+    const res = await post('/sendMessage', {
+      chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true,
+    });
+    if (res.ok) return { ok: true };
+
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 429) return { ok: false, retryAfter: body?.parameters?.retry_after ?? 5 };
+    if (res.status === 403) return { ok: false, blocked: true };
+    console.error(`sendAlert: HTTP ${res.status} ${redact(JSON.stringify(body).slice(0, 200))}`);
+    return { ok: false };
+  } catch (err) {
+    console.error('sendAlert error:', redact(err.message));
+    return { ok: false };
+  }
+}
+
 export async function sendPhoto(chatId, imageBuffer, caption) {
   const { FormData, Blob } = await import('node-fetch');
   const form = new FormData();

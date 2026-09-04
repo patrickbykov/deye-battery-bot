@@ -121,6 +121,30 @@ export function createDb(filename) {
       db.prepare('INSERT OR IGNORE INTO ignored_inverters (id) VALUES (?)').run(id);
     })(),
 
+    // --- Доставка алертів ---
+    // Вікно, а не вічний ключ: Grafana повторює сповіщення для алерту, що
+    // досі горить, кожні repeat_interval (типово 4 год). Вічний дедуп убив би
+    // ці нагадування — SOC лежить на 15% третю добу, а повідомлень немає.
+    wasDelivered: (dedupKey, chatId, windowMs) => {
+      const row = db.prepare(
+        'SELECT delivered_at FROM alert_deliveries WHERE dedup_key = ? AND chat_id = ?'
+      ).get(dedupKey, chatId);
+      if (!row) return false;
+      return Date.now() - Date.parse(row.delivered_at) < windowMs;
+    },
+
+    markDelivered: (dedupKey, chatId) =>
+      db.prepare(
+        `INSERT INTO alert_deliveries (dedup_key, chat_id, delivered_at)
+         VALUES (?, ?, ${NOW})
+         ON CONFLICT(dedup_key, chat_id) DO UPDATE SET delivered_at = ${NOW}`
+      ).run(dedupKey, chatId),
+
+    pruneDeliveries: days =>
+      db.prepare(
+        `DELETE FROM alert_deliveries WHERE delivered_at < datetime('now', ?)`
+      ).run(`-${days} days`),
+
     // --- Users ---
     // Нік оновлюємо при кожному контакті: у Telegram його міняють, і застарілий
     // нік в адмінці робить схвалення вгадуванням. Статус НЕ чіпаємо.
