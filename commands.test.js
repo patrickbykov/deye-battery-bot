@@ -117,7 +117,7 @@ test('помилка Grafana не показує користувачу внут
     store,
     telegram: { sendMessage: async (c, t) => sent.push(t), sendPhoto: async () => {} },
     grafana: {
-      queryGrafana: async () => { throw new Error('uid датасорсу aff44z3iv9fy8d'); },
+      queryGrafana: async () => { throw new Error('uid датасорсу ds-uid-that-must-not-leak'); },
       renderGrafanaPanel: async () => Buffer.from(''),
       getDashboardLink: () => 'https://g',
     },
@@ -127,7 +127,7 @@ test('помилка Grafana не показує користувачу внут
   store.replaceSubscriptions(7, ['INV1']);
   store.setUserStatus(7, 'approved', 'test');
   await commands.get('/status')(ctx);
-  assert.doesNotMatch(sent.join(' '), /aff44z3iv9fy8d/);
+  assert.doesNotMatch(sent.join(' '), /ds-uid-that-must-not-leak/);
 });
 
 test('/help не містить хардкоду моделі й порогу', async () => {

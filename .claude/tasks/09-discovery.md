@@ -48,8 +48,8 @@ discovery: новий інвертор test
 
 У проді:
 ```json
-[{"id":"2512151417","dashboard_uid":"0c5a65c2-…","panel_id":6},
- {"id":"test","dashboard_uid":"0c5a65c2-…","panel_id":6}]
+[{"id":"2512151417","dashboard_uid":"<GRAFANA_DASHBOARD_UID>","panel_id":6},
+ {"id":"test","dashboard_uid":"<GRAFANA_DASHBOARD_UID>","panel_id":6}]
 user_version 1
 ```
 

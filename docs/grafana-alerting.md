@@ -83,7 +83,7 @@ API як `[REDACTED]`, тож PUT на contact point ризикує затерт
 Value: [no value]
 Labels:                                   Показники не надходять уже понад
  - alertname = 📡 Дані з інвертора…       45 хвилин. Зараз невідомо, який
- - datasource_uid = aff44z3iv9fy8d        заряд батареї — і якщо він впаде,
+ - datasource_uid = <GRAFANA_DS_UID>        заряд батареї — і якщо він впаде,
  - grafana_folder = Deye Alerts           попередження не прийде.
  - ref_id = A
 Annotations:                              Потрібно перевірити моніторинг.
