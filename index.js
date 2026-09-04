@@ -7,6 +7,7 @@ import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
 import { createAdminRoutes } from './admin-routes.js';
 import { createBackup, BACKUP_INTERVAL_MS } from './backup.js';
+import { throttleDecision } from './admin-auth.js';
 import path from 'node:path';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
@@ -23,6 +24,11 @@ const commands = createCommands({
   grafana: { queryGrafana, renderGrafanaPanel, getDashboardLink },
   log: console,
 });
+
+// Гейт схвалення не рятує від схваленого користувача, який тисне /graph
+// щосекунди: рендер Grafana — метрована операція на Free-плані.
+const commandThrottle = {};
+const COMMAND_LIMITS = { windowMs: 5 * 60_000, perKeyLimit: 30, globalLimit: 300 };
 
 const notifyAdmin = (msg, options) => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg, options) : Promise.resolve());
 
@@ -138,6 +144,11 @@ async function processUpdate(update) {
   // typeof на випадок ключів на кшталт __proto__ чи constructor: текст
   // повідомлення приходить від будь-кого.
   if (typeof handler !== 'function') return;
+
+  if (!throttleDecision(commandThrottle, String(msg.chat.id), Date.now(), COMMAND_LIMITS).allowed) {
+    console.warn(`Ліміт команд для chat:${msg.chat.id}`);
+    return;
+  }
   await handler({ chatId: msg.chat.id, messageId: msg.message_id, from: msg.from, arg: parsed.arg });
 }
 

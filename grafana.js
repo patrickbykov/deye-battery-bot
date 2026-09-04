@@ -3,6 +3,22 @@ import { GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID } from './
 
 const TIMEOUT_MS = 20_000;
 
+const defaultSleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Одна 5xx від Grafana не має ставати видимою користувачу помилкою. Але
+// ретраїти все підряд теж не можна: протухлий токен від повторення не оживе,
+// а зайві спроби палять квоту метрованого рендера на Free-плані.
+export async function withGrafanaRetry(fn, { attempts = 3, baseDelayMs = 400, sleep = defaultSleep } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= attempts - 1 || err.retryable === false) throw err;
+      await sleep(baseDelayMs * 2 ** attempt);
+    }
+  }
+}
+
 // Жоден fetch не має лишатись без таймаута: зависла сесія блокує цикл бота.
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
@@ -14,7 +30,7 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
-export async function queryGrafana(fluxQuery) {
+async function queryGrafanaOnce(fluxQuery) {
   const res = await fetchWithTimeout(`${GRAFANA_URL}/api/ds/query`, {
     method: 'POST',
     headers: {
@@ -37,10 +53,12 @@ export async function queryGrafana(fluxQuery) {
     // Сире тіло Grafana містить uid датасорсів, помилки парсингу Flux
     // і внутрішні хости — воно йде в лог, а не користувачу.
     console.error(`Grafana query failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
-    throw new Error('grafana-query-failed');
+    throw Object.assign(new Error('grafana-query-failed'), { retryable: res.status >= 500 });
   }
   return res.json();
 }
+
+export const queryGrafana = flux => withGrafanaRetry(() => queryGrafanaOnce(flux));
 
 export async function renderGrafanaPanel(inverter) {
   const dashUid = inverter.dashboard_uid || DASHBOARD_UID;
@@ -50,7 +68,7 @@ export async function renderGrafanaPanel(inverter) {
     headers: { 'Authorization': `Bearer ${GRAFANA_SA_TOKEN}` }
   });
 
-  if (!res.ok) throw new Error(`Render failed: ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`Render failed: ${res.status}`), { retryable: res.status >= 500 });
 
   const buffer = await res.arrayBuffer();
   return Buffer.from(buffer);
