@@ -1,4 +1,4 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent } from './helpers.js';
 import { buildKeyboard, readChecked } from './subs-keyboard.js';
 import { INFLUXDB_BUCKET } from './config.js';
 
@@ -67,6 +67,26 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
     }
   }
 
+  // Окремим запитом, а не разом із батареєю: обидва виміри мають поля
+  // voltage і power, і pivot злив би їх в одну колонку. Збій тут не має
+  // забирати стан батареї — дані мережі другорядні.
+  async function gridVoltageOf(inverter) {
+    const flux = `from(bucket: "${INFLUXDB_BUCKET}")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "grid" and r._field == "voltage")
+  |> filter(fn: (r) => r.inverter == "${inverter.id}")
+  |> last()`;
+    try {
+      const frames = (await queryGrafana(flux))?.results?.A?.frames;
+      if (!frames?.length) return null;
+      const f = parseGrafanaFields(frames);
+      return f.voltage ?? f._value ?? null;
+    } catch (err) {
+      log.error(`/status мережа ${inverter.id}: ${err.message}`);
+      return null;
+    }
+  }
+
   async function statusOf(chatId, inverter) {
     const flux = `from(bucket: "${INFLUXDB_BUCKET}")
   |> range(start: -1h)
@@ -82,6 +102,14 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
     }
 
     const f = parseGrafanaFields(frames);
+
+    // Рядка немає взагалі, якщо даних немає: «невідомо» не інформує, а
+    // лише додає шуму в повідомлення, яке читають поспіхом.
+    const grid = gridPresent(await gridVoltageOf(inverter));
+    const gridLine = grid === null ? ''
+      : grid ? '\n🔌 Мережа: <b>є</b>'
+             : '\n🔌 Мережа: <b>немає</b> — обʼєкт живиться від батареї';
+
     await sendMessage(chatId, `🔋 <b>${inverter.name}</b>
 
 🔋 SOC: <b>${fmt(f.soc, 0)}%</b> ${f.soc < 20 ? '⚠️ КРИТИЧНО!' : ''}
@@ -90,7 +118,7 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
 ⚡ Напруга: <b>${fmt(f.voltage)} V</b>
 ⚡ Струм: <b>${fmt(f.current)} A</b>
 ⚡ Потужність: <b>${fmt(f.power)} W</b>${batteryState(f.power) ? ` — ${batteryState(f.power)}` : ''}
-🌡️ Температура: <b>${fmt(f.temperature)} °C</b>
+🌡️ Температура: <b>${fmt(f.temperature)} °C</b>${gridLine}
 
 🟢 Оновлено: ${formatKyivTime(f['_time'] ?? f.Time)}
 📊 <a href="${getDashboardLink(inverter)}">Відкрити дашборд</a>`);

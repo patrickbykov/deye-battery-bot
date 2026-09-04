@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -64,4 +64,22 @@ test('batteryState: близьке до нуля — не рух, а плава�
 test('batteryState: без значення — нічого не вигадуємо', () => {
   assert.equal(batteryState(null), null);
   assert.equal(batteryState('abc'), null);
+});
+
+test('gridPresent: 230 В — мережа є, нуль — немає', () => {
+  assert.equal(gridPresent(237.3), true);
+  assert.equal(gridPresent(0), false);
+});
+
+test('gridPresent: поріг той самий, що в правилі алерту', () => {
+  // Якби поріг тут і в Grafana розійшлись, бот казав би «мережа є», поки
+  // приходило б сповіщення про її зникнення.
+  assert.equal(gridPresent(49), false);
+  assert.equal(gridPresent(51), true);
+});
+
+test('gridPresent: без даних — не вигадуємо відповідь', () => {
+  assert.equal(gridPresent(null), null);
+  assert.equal(gridPresent(undefined), null);
+  assert.equal(gridPresent('abc'), null);
 });

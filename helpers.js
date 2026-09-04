@@ -64,3 +64,14 @@ export function batteryState(power) {
   if (Math.abs(watts) < IDLE_WATTS) return 'у спокої';
   return watts < 0 ? 'заряджається' : 'розряджається';
 }
+
+// Той самий поріг, що в правилі «⚡ Немає живлення від мережі» (docs/grafana-alerting.md).
+// Якщо вони розійдуться, бот казатиме «мережа є» саме тоді, коли надходить
+// сповіщення про її зникнення.
+export const GRID_PRESENT_VOLTS = 50;
+
+export function gridPresent(voltage) {
+  const volts = Number(voltage);
+  if (voltage === null || voltage === undefined || !Number.isFinite(volts)) return null;
+  return volts >= GRID_PRESENT_VOLTS;
+}

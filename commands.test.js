@@ -406,3 +406,65 @@ test('/help не обіцяє аргумент там, де тепер клав�
   await commands.get('/help')(ctx);
   assert.doesNotMatch(sent[0].text, /\/subscribe &lt;id&gt;/);
 });
+
+// --- Стан мережі в /status ---
+
+function statusHarness({ gridVoltage, gridFails = false } = {}) {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Клочківська 117', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+
+  const sent = [];
+  const frame = (names, values) => ({ results: { A: { frames: [{
+    schema: { fields: names.map(name => ({ name })) }, data: { values } } ] } } });
+
+  const commands = createCommands({
+    store,
+    telegram: { sendMessage: async (c, t) => sent.push(t), sendPhoto: async () => {} },
+    grafana: {
+      queryGrafana: async flux => {
+        if (flux.includes('"grid"')) {
+          if (gridFails) throw new Error('Grafana 500 на запиті мережі');
+          if (gridVoltage === undefined) return frame([], []);
+          return frame(['_time', 'voltage'], [[1788455061000], [gridVoltage]]);
+        }
+        return frame(['_time', 'soc', 'power'], [[1788455061000], [98], [-405]]);
+      },
+      renderGrafanaPanel: async () => Buffer.from(''), getDashboardLink: () => 'https://g',
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+  return { commands, sent };
+}
+
+test('/status каже, що мережа є', async () => {
+  const { commands, sent } = statusHarness({ gridVoltage: 237.3 });
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /Мережа/);
+  assert.match(sent[0], /є/);
+});
+
+test('/status каже, що живлення немає і обʼєкт на батареї', async () => {
+  const { commands, sent } = statusHarness({ gridVoltage: 0 });
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /немає/);
+  assert.match(sent[0], /батаре/i);
+});
+
+test('без даних мережі рядок просто відсутній — не «невідомо»', async () => {
+  const { commands, sent } = statusHarness({});
+  await commands.get('/status')({ chatId: 7 });
+  assert.doesNotMatch(sent[0], /Мережа/);
+  assert.match(sent[0], /SOC/, 'решта стану на місці');
+});
+
+test('збій запиту мережі не забирає стан батареї', async () => {
+  // Дані мережі другорядні; втратити через них SOC було б обміном навпаки.
+  const { commands, sent } = statusHarness({ gridFails: true });
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /SOC/);
+  assert.doesNotMatch(sent[0], /Мережа/);
+});
