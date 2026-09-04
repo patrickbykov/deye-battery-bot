@@ -184,6 +184,17 @@ export function createDb(filename) {
         .map(user => ({ ...user, inverters: byChat.get(user.chat_id) ?? [] }));
     },
 
+    // Дамп для бекапу: підписки й рішення про доступ не відновить ніщо,
+    // якщо втратити волюм.
+    exportAll: () => ({
+      exportedAt: new Date().toISOString(),
+      schemaVersion: SCHEMA_VERSION,
+      users: db.prepare('SELECT * FROM users ORDER BY chat_id').all(),
+      subscriptions: db.prepare('SELECT * FROM subscriptions ORDER BY chat_id, inverter_id').all(),
+      inverters: db.prepare('SELECT * FROM inverters ORDER BY id').all(),
+      ignoredInverters: db.prepare('SELECT * FROM ignored_inverters ORDER BY id').all(),
+    }),
+
     // --- Subscriptions ---
     // Одна транзакція: новий набір і скидання статусу нероздільні. Інакше
     // між двома операціями існує мить, коли користувач уже підписаний на

@@ -1,10 +1,11 @@
 import fetch from 'node-fetch';
-import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, GRAFANA_WEBHOOK_TOKEN, TG_API, PORT } from './config.js';
+import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, GRAFANA_WEBHOOK_TOKEN, ADMIN_PASSWORD_HASH, TG_API, PORT } from './config.js';
 import { answerCallbackQuery, sendMessage, sendPhoto, sendAlert, editMessageReplyMarkup, editMessageText } from './telegram.js';
 import { parseCommand, createCommands, createCallbacks } from './commands.js';
 import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
+import { createAdminRoutes } from './admin-routes.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer, readBody } from './http-server.js';
@@ -206,6 +207,7 @@ const routes = [
       res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
     },
   },
+  ...createAdminRoutes({ store, passwordHash: ADMIN_PASSWORD_HASH, log: console }),
   {
     method: 'GET',
     path: '/robots.txt',
