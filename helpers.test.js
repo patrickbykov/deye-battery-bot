@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -112,4 +112,34 @@ test('normalizeUsername відхиляє недозволені символи',
   assert.equal(normalizeUsername('t.me/volunteer'), null);
   assert.equal(normalizeUsername(''), null);
   assert.equal(normalizeUsername(null), null);
+});
+
+test('схвалення каже, що робити далі', () => {
+  assert.match(decisionMessage('pending', 'approved'), /Доступ відкрито/);
+  assert.match(decisionMessage('pending', 'approved'), /\/status/);
+});
+
+test('відмова новому лишає двері прочиненими', () => {
+  // rejected означає «не зараз», а не «ніколи» — і людина має це чути.
+  assert.match(decisionMessage('pending', 'rejected'), /відхилено/i);
+  assert.match(decisionMessage('pending', 'rejected'), /\/subscribe/);
+});
+
+test('зняття доступу не плутають із відмовою за заявкою', () => {
+  // Найважливіший випадок: підписник просто перестає отримувати попередження
+  // про розряд. Без окремого тексту він вважатиме це поломкою, а не рішенням.
+  const revoked = decisionMessage('approved', 'rejected');
+  assert.match(revoked, /Доступ закрито/);
+  assert.doesNotMatch(revoked, /Заявку відхилено/);
+});
+
+test('текст той самий незалежно від того, звідки натиснув адмін', () => {
+  // Одне джерело на веб і на Telegram: інакше формулювання розійдуться,
+  // і людина отримає різне за однакове рішення.
+  assert.equal(decisionMessage('pending', 'approved'), decisionMessage('rejected', 'approved'));
+});
+
+test('рішення без зміни статусу не має тексту — писати нема про що', () => {
+  assert.equal(decisionMessage('approved', 'approved'), null);
+  assert.equal(decisionMessage('rejected', 'rejected'), null);
 });

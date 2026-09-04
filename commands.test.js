@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommand, createCommands } from './commands.js';
 import { createDb } from './db.js';
+import { decisionMessage } from './helpers.js';
 
 test('лоуеркейсить команду, але не аргумент', () => {
   // Головний баг вихідного плану: parseCommand(text.toLowerCase()) робив
@@ -588,4 +589,30 @@ test('звичайний текстовий /subscribe адміна не сми�
   });
 
   assert.deepEqual(adminMsgs, []);
+});
+
+test('схвалення з Telegram шле рівно той самий текст, що й веб-адмінка', async () => {
+  // Сторож від розходження: тексти живуть в одному місці, і ця перевірка
+  // впаде, щойно хтось поправить формулювання лише в одному зі шляхів.
+  const { callbacks, toUser } = adminHarness();
+  await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'ok:7' });
+
+  assert.equal(toUser[0].t, decisionMessage('pending', 'approved'));
+});
+
+test('повторне схвалення того, хто вже має доступ, не шле нічого', async () => {
+  // Рішення не змінилось — писати нема про що.
+  const { store, callbacks, toUser } = adminHarness();
+  store.setUserStatus(7, 'approved', 'test');
+
+  await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'ok:7' });
+  assert.deepEqual(toUser, []);
+});
+
+test('зняття доступу з Telegram каже про зняття, а не про відмову за заявкою', async () => {
+  const { store, callbacks, toUser } = adminHarness();
+  store.setUserStatus(7, 'approved', 'test');
+
+  await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'no:7' });
+  assert.match(toUser[0].t, /Доступ закрито/);
 });

@@ -228,7 +228,11 @@ const routes = [
       res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
     },
   },
-  ...createAdminRoutes({ store, passwordHash: ADMIN_PASSWORD_HASH, log: console }),
+  // notifyUser — те саме, чим користується Telegram-шлях: рішення адміна
+  // нічого не варте, поки людина про нього не знає.
+  ...createAdminRoutes({
+    store, passwordHash: ADMIN_PASSWORD_HASH, notifyUser: sendMessage, log: console,
+  }),
   {
     method: 'GET',
     path: '/robots.txt',

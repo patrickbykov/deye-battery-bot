@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readBody } from './http-server.js';
-import { normalizeUsername } from './helpers.js';
+import { normalizeUsername, decisionMessage } from './helpers.js';
 import { loginPage, usersPage, objectsPage } from './admin-views.js';
 import {
   verifyPassword, deriveKeys, signSession, verifySession, csrfToken, csrfValid, throttleDecision,
@@ -36,7 +36,11 @@ async function readForm(req) {
   return { get: name => params.get(name), all: name => params.getAll(name) };
 }
 
-export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) {
+// notifyUser за замовчуванням нічого не робить: більшість маршрутів людей не
+// стосуються, і тести решти не мають бути змушені його підставляти.
+export function createAdminRoutes({
+  store, passwordHash, log, notifyUser = async () => {}, now = Date.now,
+}) {
   const keys = deriveKeys(passwordHash);
   const throttle = {};
 
@@ -139,10 +143,29 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
       const known = new Set(form.all('known').map(Number));
       const approved = new Set(form.all('approve').map(Number));
       for (const chatId of known) {
+        // Статус ДО запису потрібен не лише щоб не писати даремно: він
+        // розрізняє відмову за новою заявкою і зняття вже наданого доступу.
+        // Обидві події дають 'rejected', але людині це різні новини.
+        const before = store.getUser(chatId)?.status;
+        // Рядка немає — людина зробила /forgetme, поки сторінка була
+        // відкрита. UPDATE нічого не знайде, і писати нема кому.
+        if (before === undefined) continue;
+
         const wanted = approved.has(chatId) ? 'approved' : 'rejected';
-        if (store.getUser(chatId)?.status !== wanted) {
-          store.setUserStatus(chatId, wanted, 'web');
-          log.info(`Адмінка: chat:${chatId} → ${wanted}`);
+        if (before === wanted) continue;
+
+        store.setUserStatus(chatId, wanted, 'web');
+        log.info(`Адмінка: chat:${chatId} → ${wanted}`);
+
+        // Рішення адміна нічого не варте, поки людина про нього не знає:
+        // до цього схвалення з вебу проходило мовчки, і підписник не мав
+        // підстав запідозрити, що тиша — це рішення, а не поломка.
+        try {
+          await notifyUser(chatId, decisionMessage(before, wanted));
+        } catch (err) {
+          // «bot was blocked by the user» — звичайна річ, і вона не має
+          // заважати адміну зберегти рішення щодо решти людей.
+          log.error(`Адмінка: не вдалось сповістити chat:${chatId}: ${err.message}`);
         }
       }
       redirect(res, '/admin/users');

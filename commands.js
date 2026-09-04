@@ -1,4 +1,4 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent, decisionMessage } from './helpers.js';
 import { buildKeyboard, readChecked } from './subs-keyboard.js';
 import { INFLUXDB_BUCKET } from './config.js';
 
@@ -280,17 +280,21 @@ export function createCommands({
     }
 
     const approved = decision === 'ok';
+    const wanted = approved ? 'approved' : 'rejected';
     // Відхилення НЕ видаляє підписки: людину можуть схвалити пізніше, і
     // змушувати обирати заново — марна робота.
-    store.setUserStatus(targetId, approved ? 'approved' : 'rejected', `tg:${from.id}`);
+    store.setUserStatus(targetId, wanted, `tg:${from.id}`);
 
     const who = user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.first_name ?? targetId);
     await telegram.editMessageText(chatId, messageId,
       `${approved ? '✅ Схвалено' : '🚫 Відхилено'} ${who}`);
     await telegram.answerCallbackQuery(callbackId, approved ? 'Схвалено' : 'Відхилено');
-    await telegram.sendMessage(targetId, approved
-      ? '✅ Доступ відкрито. /status — поточний стан, /graph — графік.'
-      : '🚫 Заявку відхилено. Можна спробувати пізніше — /subscribe.');
+
+    // Текст спільний із веб-адмінкою: інакше людина отримувала б різні
+    // формулювання за однакове рішення залежно від того, звідки натиснув
+    // адмін. Порожньо, коли статус не змінився — писати нема про що.
+    const text = decisionMessage(user.status, wanted);
+    if (text) await telegram.sendMessage(targetId, text);
     log.info(`Рішення ${approved ? 'approve' : 'reject'} для chat:${targetId}`);
   });
 
@@ -386,17 +390,21 @@ export function createCallbacks({ store, telegram, notifyAdmin, log, adminChatId
     }
 
     const approved = decision === 'ok';
+    const wanted = approved ? 'approved' : 'rejected';
     // Відхилення НЕ видаляє підписки: людину можуть схвалити пізніше, і
     // змушувати обирати заново — марна робота.
-    store.setUserStatus(targetId, approved ? 'approved' : 'rejected', `tg:${from.id}`);
+    store.setUserStatus(targetId, wanted, `tg:${from.id}`);
 
     const who = user.username ? '@' + escapeHtml(user.username) : escapeHtml(user.first_name ?? targetId);
     await telegram.editMessageText(chatId, messageId,
       `${approved ? '✅ Схвалено' : '🚫 Відхилено'} ${who}`);
     await telegram.answerCallbackQuery(callbackId, approved ? 'Схвалено' : 'Відхилено');
-    await telegram.sendMessage(targetId, approved
-      ? '✅ Доступ відкрито. /status — поточний стан, /graph — графік.'
-      : '🚫 Заявку відхилено. Можна спробувати пізніше — /subscribe.');
+
+    // Текст спільний із веб-адмінкою: інакше людина отримувала б різні
+    // формулювання за однакове рішення залежно від того, звідки натиснув
+    // адмін. Порожньо, коли статус не змінився — писати нема про що.
+    const text = decisionMessage(user.status, wanted);
+    if (text) await telegram.sendMessage(targetId, text);
     log.info(`Рішення ${approved ? 'approve' : 'reject'} для chat:${targetId}`);
   });
 

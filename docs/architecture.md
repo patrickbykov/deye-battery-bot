@@ -80,7 +80,7 @@
 | `config.js` | env з валідацією на старті; секрети неперелічувані, щоб не витекти в лог |
 | `db.js` | `createDb(filename)`, міграції через `PRAGMA user_version`, увесь SQL |
 | `commands.js` | `createCommands` / `createCallbacks`, гейт доступу, `parseCommand` |
-| `helpers.js` | форматування, `redact`, `escapeHtml`, `batteryState`, `gridPresent` |
+| `helpers.js` | форматування, `redact`, `escapeHtml`, `batteryState`, `gridPresent`, `normalizeUsername`, `decisionMessage` |
 | `telegram.js` | виклики Bot API з таймаутами; `sendAlert` розрізняє 429 і 403 |
 | `grafana.js` | запит Flux, рендер панелі, посилання на дашборд, ретраї лише на 5xx |
 | `discovery.js` | нові інвертори з `schema.tagValues()` раз на 5 хв |
@@ -89,7 +89,7 @@
 | `http-server.js` | сервер, `readBody` з лімітом, заголовки безпеки |
 | `admin-auth.js` | scrypt, підпис сесії, CSRF, тротлінг — усе чисте |
 | `admin-views.js` | SSR-HTML: `loginPage`, `usersPage`, `objectsPage` |
-| `admin-routes.js` | маршрути адмінки (I/O) |
+| `admin-routes.js` | маршрути адмінки (I/O); рішення про доступ шле людині в Telegram |
 | `webhook-grafana.js` | `webhookAuthorized`, `parseGrafanaWebhook`, `dedupKey` |
 | `alerts-fanout.js` | `selectRecipients`, `formatAlert` — кому слати і який текст |
 | `alerts-queue.js` | послідовна відправка, пауза, дедуп, 429/403 |
