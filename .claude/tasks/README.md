@@ -106,8 +106,8 @@
 |---|---|---|
 | 15 | [Таблиця `users`, статуси, міграція](15-users-schema.md) | ☑ |
 | 16 | [HTTP-роутер, health поза роутером](16-http-router.md) | ☑ |
-| 17 | [Реєстрація й вибір інверторів](17-bot-registration.md) | ☐ |
-| 18 | [Схвалення в Telegram, гейт, `/forgetme`](18-bot-approval.md) | ☐ |
+| 17 | [Реєстрація й вибір інверторів](17-bot-registration.md) | ☑ |
+| 18 | [Схвалення в Telegram, гейт, `/forgetme`](18-bot-approval.md) | ☑ |
 | 19 | [Приймання вебхука від Grafana](19-grafana-webhook.md) | ☐ |
 | 20 | [Персональна розсилка алертів](20-alert-fanout.md) | ☐ |
 | 21 | [Перевести Grafana на вебхук](21-grafana-to-webhook.md) | ☐ |
