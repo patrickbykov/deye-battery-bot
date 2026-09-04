@@ -1,4 +1,5 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml } from './helpers.js';
+import { buildKeyboard, readChecked } from './subs-keyboard.js';
 import { INFLUXDB_BUCKET } from './config.js';
 
 // Telegram тримає ~30 msg/s. При кількох підписках /status шле кілька
@@ -95,7 +96,24 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
   });
 
   handlers.set('/subscribe', async ({ chatId, arg, from }) => {
-    const inverter = arg && store.getInverter(arg);
+    // Без аргументу — клавіатура з чекбоксами. Текстовий шлях лишається для
+    // тих, хто знає id, і для скриптів.
+    if (!arg) {
+      const inverters = store.getAllInverters();
+      const keyboard = buildKeyboard(inverters, store.getSubscriptions(chatId).map(i => i.id));
+      if (!keyboard) {
+        await sendMessage(chatId, 'Поки жодного об’єкта не виявлено.');
+        return;
+      }
+      const isApproved = store.getUser(chatId)?.status === 'approved';
+      await sendMessage(chatId,
+        'Оберіть об’єкти, за якими хочете отримувати сповіщення:' +
+        (isApproved ? '\n\n⚠️ Зміна набору поверне заявку на розгляд, і до схвалення сповіщення не надходитимуть.' : ''),
+        { reply_markup: keyboard });
+      return;
+    }
+
+    const inverter = store.getInverter(arg);
     if (!inverter) {
       await sendMessage(chatId, `❌ Об’єкт <code>${arg ?? ''}</code> не знайдено. /list — перелік.`);
       return;
@@ -148,6 +166,55 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
           `📊 <a href="${getDashboardLink(inverter)}">${inverter.name} — відкрити дашборд</a>\n\n⚠️ Графік тимчасово недоступний.`);
       }
     });
+  });
+
+  return handlers;
+}
+
+// --- Обробники натискань на inline-клавіатурі ---
+
+export function createCallbacks({ store, telegram, notifyAdmin, log }) {
+  const handlers = new Map();
+
+  function idsFromRowids(rowids) {
+    const wanted = new Set(rowids);
+    return store.getAllInverters().filter(i => wanted.has(i.rowid));
+  }
+
+  handlers.set('t', async ({ chatId, messageId, callbackId, value, replyMarkup }) => {
+    const rowid = Number(value);
+    const checked = new Set(readChecked(replyMarkup));
+    const added = !checked.has(rowid);
+    if (added) checked.add(rowid); else checked.delete(rowid);
+
+    const inverters = store.getAllInverters();
+    const checkedIds = inverters.filter(i => checked.has(i.rowid)).map(i => i.id);
+    await telegram.editMessageReplyMarkup(chatId, messageId, buildKeyboard(inverters, checkedIds));
+    await telegram.answerCallbackQuery(callbackId, added ? 'Додано' : 'Прибрано');
+  });
+
+  handlers.set('req', async ({ chatId, messageId, callbackId, from, replyMarkup }) => {
+    const chosen = idsFromRowids(readChecked(replyMarkup));
+    if (chosen.length === 0) {
+      await telegram.answerCallbackQuery(callbackId, 'Оберіть хоча б один об’єкт');
+      return;
+    }
+
+    // Користувач мусить існувати до підписки (FOREIGN KEY), а нік оновлюємо
+    // при кожному зверненні — люди їх міняють.
+    store.upsertUser(chatId, from?.username ?? null, from?.first_name ?? null);
+    // Транзакція всередині: набір і скидання статусу в pending нероздільні.
+    store.replaceSubscriptions(chatId, chosen.map(i => i.id));
+
+    await telegram.editMessageText(chatId, messageId,
+      `📨 Заявку надіслано на розгляд.\n\nОбрані об’єкти:\n${chosen.map(i => `• ${escapeHtml(i.name)}`).join('\n')}\n\nСповіщення надходитимуть після схвалення.`);
+    await telegram.answerCallbackQuery(callbackId, 'Заявку надіслано');
+
+    // Ім'я обирає сама людина, тож воно може містити '<' — і тоді Telegram
+    // відхилив би повідомлення адміну цілком з 400.
+    const who = from?.username ? '@' + escapeHtml(from.username) : escapeHtml(from?.first_name ?? chatId);
+    await notifyAdmin(`🆕 <b>Нова заявка</b>\n\n${who} (${escapeHtml(from?.first_name ?? '')})\nОб’єкти: ${chosen.map(i => escapeHtml(i.name)).join(', ')}`);
+    log.info(`Заявка від chat:${chatId} на ${chosen.length} об’єкт(ів)`);
   });
 
   return handlers;

@@ -153,3 +153,102 @@ test('нік оновлюється при кожному зверненні', a
   await commands.get('/subscribe')({ chatId: 999, from: { username: 'new' }, arg: 'INV2' });
   assert.equal(store.getUser(999).username, 'new');
 });
+
+// --- Callback-и клавіатури підписок ---
+import { createCallbacks } from './commands.js';
+import { buildKeyboard, CHECK, UNCHECK } from './subs-keyboard.js';
+
+function cbHarness() {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertInverter('INV2', 'Другий', 'DASH');
+  const edits = [], toasts = [], adminMsgs = [], texts = [];
+  const callbacks = createCallbacks({
+    store,
+    telegram: {
+      editMessageReplyMarkup: async (c, m, markup) => edits.push(markup),
+      editMessageText: async (c, m, text) => texts.push(text),
+      answerCallbackQuery: async (id, text) => toasts.push(text),
+      sendMessage: async () => {},
+    },
+    notifyAdmin: async msg => adminMsgs.push(msg),
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const inverters = store.getAllInverters();
+  return { store, callbacks, edits, toasts, adminMsgs, texts, inverters };
+}
+
+const ctx = (markup, from = { id: 5, username: 'petro', first_name: 'Петро' }) => ({
+  chatId: 5, messageId: 1, callbackId: 'cb1', from, replyMarkup: markup,
+});
+
+test('тик по інвертору перемикає галочку в клавіатурі', async () => {
+  const { callbacks, edits, inverters } = cbHarness();
+  const markup = buildKeyboard(inverters, []);
+  await callbacks.get('t')({ ...ctx(markup), value: String(inverters[0].rowid) });
+
+  assert.ok(edits[0].inline_keyboard[0][0].text.startsWith(CHECK));
+  assert.ok(edits[0].inline_keyboard[1][0].text.startsWith(UNCHECK));
+});
+
+test('повторний тик знімає галочку', async () => {
+  const { callbacks, edits, inverters } = cbHarness();
+  const markup = buildKeyboard(inverters, ['INV1']);
+  await callbacks.get('t')({ ...ctx(markup), value: String(inverters[0].rowid) });
+  assert.ok(edits[0].inline_keyboard[0][0].text.startsWith(UNCHECK));
+});
+
+test('заявка без жодного обраного не пише в БД', async () => {
+  const { callbacks, store, toasts, inverters } = cbHarness();
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, [])));
+  assert.equal(store.getUser(5), undefined);
+  assert.match(toasts.join(' '), /хоча б один/i);
+});
+
+test('заявка записує підписки, ставить pending і повідомляє адміна', async () => {
+  const { callbacks, store, adminMsgs, inverters } = cbHarness();
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1', 'INV2'])));
+
+  assert.deepEqual(store.getSubscriptions(5).map(i => i.id), ['INV1', 'INV2']);
+  assert.equal(store.getUser(5).status, 'pending');
+  assert.ok(store.getUser(5).requested_at);
+  assert.match(adminMsgs[0], /petro/);
+  assert.match(adminMsgs[0], /Перший/);
+});
+
+test('зміна набору схваленим повертає його на розгляд', async () => {
+  const { callbacks, store, inverters } = cbHarness();
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1'])));
+  store.setUserStatus(5, 'approved', 'web');
+
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1', 'INV2'])));
+  assert.equal(store.getUser(5).status, 'pending');
+});
+
+test('нік із кутовою дужкою не ламає повідомлення адміну', async () => {
+  const { callbacks, adminMsgs, inverters } = cbHarness();
+  await callbacks.get('req')(ctx(buildKeyboard(inverters, ['INV1']),
+    { id: 5, username: '<script>', first_name: 'A & B' }));
+  assert.doesNotMatch(adminMsgs[0], /<script>/);
+  assert.match(adminMsgs[0], /&lt;script&gt;/);
+});
+
+test('/subscribe без аргументу показує клавіатуру з поточним вибором', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+
+  const sent = [];
+  const commands = createCommands({
+    store,
+    telegram: { sendMessage: async (c, t, o) => sent.push({ t, o }), sendPhoto: async () => {} },
+    grafana: { queryGrafana: async () => ({}), renderGrafanaPanel: async () => Buffer.from(''), getDashboardLink: () => '' },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+
+  await commands.get('/subscribe')({ chatId: 7, from: { id: 7 } });
+  assert.ok(sent[0].o?.reply_markup, 'має бути inline-клавіатура');
+  assert.ok(sent[0].o.reply_markup.inline_keyboard[0][0].text.startsWith(CHECK));
+});

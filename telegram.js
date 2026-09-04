@@ -55,11 +55,25 @@ export async function sendPhoto(chatId, imageBuffer, caption) {
   }
 }
 
-export async function answerCallbackQuery(callbackQueryId) {
+export async function answerCallbackQuery(callbackQueryId, text) {
   // Єдина функція без try/catch — виняток звідси вилітав у processUpdate.
   try {
-    await post('/answerCallbackQuery', { callback_query_id: callbackQueryId });
+    await post('/answerCallbackQuery', { callback_query_id: callbackQueryId, text });
   } catch (err) {
     console.error('answerCallbackQuery error:', redact(err.message));
   }
+}
+
+export async function editMessageReplyMarkup(chatId, messageId, replyMarkup) {
+  const res = await post('/editMessageReplyMarkup', {
+    chat_id: chatId, message_id: messageId, reply_markup: replyMarkup,
+  });
+  if (!res.ok) console.error(`editMessageReplyMarkup: HTTP ${res.status}`);
+}
+
+export async function editMessageText(chatId, messageId, text) {
+  const res = await post('/editMessageText', {
+    chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML',
+  });
+  if (!res.ok) console.error(`editMessageText: HTTP ${res.status}`);
 }

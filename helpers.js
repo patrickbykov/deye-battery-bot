@@ -37,3 +37,15 @@ export function parseGrafanaFields(frames) {
 export function redact(text) {
   return String(text).replace(/\/bot[^/\s]+/g, '/bot<REDACTED>');
 }
+
+// Один інструмент для двох проблем: у HTML адмінки він закриває XSS, у
+// повідомленні Telegram з parse_mode HTML — помилку 400 can't parse entities,
+// через яку алерти мовчали два місяці.
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}

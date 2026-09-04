@@ -1,7 +1,8 @@
 import fetch from 'node-fetch';
 import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, TG_API, PORT } from './config.js';
-import { answerCallbackQuery, sendMessage, sendPhoto } from './telegram.js';
-import { parseCommand, createCommands } from './commands.js';
+import { answerCallbackQuery, sendMessage, sendPhoto, editMessageReplyMarkup, editMessageText } from './telegram.js';
+import { parseCommand, createCommands, createCallbacks } from './commands.js';
+import { parseCallback } from './subs-keyboard.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer } from './http-server.js';
@@ -15,6 +16,15 @@ const commands = createCommands({
   store,
   telegram: { sendMessage, sendPhoto },
   grafana: { queryGrafana, renderGrafanaPanel, getDashboardLink },
+  log: console,
+});
+
+const notifyAdmin = msg => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg) : Promise.resolve());
+
+const callbacks = createCallbacks({
+  store,
+  telegram: { editMessageReplyMarkup, editMessageText, answerCallbackQuery, sendMessage },
+  notifyAdmin,
   log: console,
 });
 
@@ -61,12 +71,27 @@ const WATCHDOG_LIMIT_MS = 600_000;
 
 async function processUpdate(update) {
   if (update.callback_query) {
-    const { message, data, id } = update.callback_query;
-    console.log(`Callback ${data} from chat ${message.chat.id}`);
+    const { message, data, id, from } = update.callback_query;
+    if (message?.chat?.type !== 'private') return;
 
-    const handler = commands[data];
-    if (handler) await handler(message.chat.id);
-    await answerCallbackQuery(id);
+    const parsed = parseCallback(data);
+    // Окрема мапа для callback-ів і перевірка typeof: callback_data приходить
+    // від клієнта, тобто там може бути будь-що, включно з __proto__.
+    const handler = parsed && callbacks.get(parsed.action);
+    console.log(`Callback ${typeof handler === 'function' ? parsed.action : '(unknown)'} from chat ${message.chat.id}`);
+
+    if (typeof handler !== 'function') {
+      await answerCallbackQuery(id);
+      return;
+    }
+    await handler({
+      chatId: message.chat.id,
+      messageId: message.message_id,
+      callbackId: id,
+      value: parsed.value,
+      from,
+      replyMarkup: message.reply_markup,
+    });
     return;
   }
 
@@ -212,7 +237,7 @@ async function main() {
   const discovery = createDiscovery({
     store,
     queryGrafana,
-    notifyAdmin: msg => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg) : Promise.resolve()),
+    notifyAdmin,
     log: console,
     bucket: INFLUXDB_BUCKET,
     dashboardUid: DASHBOARD_UID,

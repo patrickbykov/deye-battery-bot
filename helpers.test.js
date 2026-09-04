@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -33,4 +33,13 @@ test('redact вирізає токен бота з тексту помилки',
 
 test('redact не чіпає текст без токена', () => {
   assert.equal(redact('Grafana query failed: 500'), 'Grafana query failed: 500');
+});
+
+test('escapeHtml знешкоджує кутові дужки й амперсанд', () => {
+  // Ім'я користувача приходить з Telegram довільним Unicode: воно потрапляє
+  // і в HTML адмінки, і в повідомлення з parse_mode HTML.
+  assert.equal(escapeHtml('<script>alert(1)</script>'),
+    '&lt;script&gt;alert(1)&lt;/script&gt;');
+  assert.equal(escapeHtml('A & B'), 'A &amp; B');
+  assert.equal(escapeHtml(null), '');
 });
