@@ -38,3 +38,54 @@ export function createBackup({ store, dir, keep = 7, log, now = () => new Date()
 
   return { runOnce };
 }
+
+// Копія на волюмі не рятує від втрати самого волюма, а він прив'язаний до
+// одного хоста. Раз на тиждень той самий дамп їде в чат адміна — позасмугово,
+// туди, куди Fly не дістає.
+export const EXPORT_MARKER = 'last-export';
+export const EXPORT_INTERVAL_MS = 7 * 24 * 3600_000;
+
+// Відлік живе на диску, а не в setInterval. Процес рестартує на кожному
+// деплої, SIGTERM від Fly і спрацюванні вотчдога — таймер у памʼяті щоразу
+// починався б з нуля, і тижневий строк не настав би ніколи.
+export function createWeeklyExport({
+  store, dir, sendDocument, chatId, log, now = () => Date.now(),
+}) {
+  const markerPath = path.join(dir, EXPORT_MARKER);
+
+  function lastSentAt() {
+    try {
+      const parsed = Date.parse(fs.readFileSync(markerPath, 'utf8').trim());
+      // Битий маркер (обірваний запис, ручне редагування) не має означати,
+      // що бекапів більше не буде ніколи.
+      return Number.isNaN(parsed) ? null : parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async function runIfDue() {
+    if (chatId === null || chatId === undefined) return;
+
+    const last = lastSentAt();
+    const at = now();
+    if (last !== null && at - last < EXPORT_INTERVAL_MS) return;
+
+    try {
+      const date = new Date(at).toISOString().slice(0, 10);
+      const dump = Buffer.from(JSON.stringify(store.exportAll(), null, 2));
+      await sendDocument(chatId, dump, `deye-backup-${date}.json`,
+        '💾 Щотижнева копія: користувачі, підписки, обʼєкти й запрошення');
+
+      // Маркер пишеться ЛИШЕ після успішної відправки. Інакше збій Telegram
+      // з'їдав би цілий тиждень: наступна спроба була б аж за сім днів.
+      fs.writeFileSync(markerPath, new Date(at).toISOString());
+      log.info(`Щотижневий експорт надіслано: deye-backup-${date}.json`);
+    } catch (err) {
+      // Як і в createBackup: привід для логу, а не для падіння бота.
+      log.error(`Щотижневий експорт не вдався: ${err.message}`);
+    }
+  }
+
+  return { runIfDue };
+}

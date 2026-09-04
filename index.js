@@ -6,7 +6,7 @@ import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
 import { createAdminRoutes } from './admin-routes.js';
-import { createBackup, BACKUP_INTERVAL_MS } from './backup.js';
+import { createBackup, createWeeklyExport, BACKUP_INTERVAL_MS } from './backup.js';
 import { throttleDecision } from './admin-auth.js';
 import path from 'node:path';
 import { healthStatus } from './health.js';
@@ -315,8 +315,19 @@ async function main() {
     store, dir: path.dirname(DEFAULT_DB_PATH), keep: 7, log: console,
   });
   backup.runOnce();
+
+  // Перевіряємо на старті й на добовому тику, а слати чи ні вирішує маркер
+  // на волюмі. Окремий тижневий setInterval не спрацював би: процес рестартує
+  // на кожному деплої, і відлік у памʼяті щоразу починався б спочатку.
+  const weeklyExport = createWeeklyExport({
+    store, dir: path.dirname(DEFAULT_DB_PATH),
+    sendDocument, chatId: ADMIN_CHAT_ID, log: console,
+  });
+  weeklyExport.runIfDue();
+
   setInterval(() => {
     backup.runOnce();
+    weeklyExport.runIfDue();
     store.pruneDeliveries(7);
   }, BACKUP_INTERVAL_MS).unref();
 

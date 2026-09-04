@@ -87,7 +87,8 @@ fly deploy ./collector --ha=false           # колектор
 з InfluxDB, метрики лежать там, алерти в Grafana.
 
 - щодоби `VACUUM INTO`, ротація на 7 копій;
-- `/export` у Telegram — дамп файлом у чат адміна;
+- **щотижня дамп JSON приходить у чат адміна сам** — копія поза волюмом;
+- `/export` у Telegram — те саме на вимогу;
 - `GET /admin/export.json` — те саме з браузера.
 
 Відновлення й решта операцій — `docs/runbook.md`.

@@ -22,7 +22,7 @@ node --env-file=.env index.js
 Тести — без залежностей і без мережі:
 
 ```bash
-npm test        # 262 тести, бот і колектор разом
+npm test        # 272 тести, бот і колектор разом
 ```
 
 ## Деплой
@@ -138,8 +138,19 @@ discovery підхопить його протягом 5 хв і повідом�
 ```bash
 fly ssh sftp get /app/data/backup-2026-09-04.db -a deye-battery-bot   # файл
 ```
-- `/export` у Telegram — дамп файлом у чат адміна;
+- `/export` у Telegram — дамп файлом у чат адміна на вимогу;
+- **раз на 7 днів той самий дамп приходить у чат сам** — позасмугова копія на
+  випадок втрати волюма;
 - `GET /admin/export.json` — те саме з браузера.
+
+Строк тижневого експорту тримає `data/last-export` на волюмі. Щоб змусити його
+надіслати зараз, приберіть маркер і перезапустіть застосунок — або просто
+надішліть `/export`:
+
+```bash
+fly ssh console -a deye-battery-bot -C "rm -f /app/data/last-export"
+fly apps restart deye-battery-bot
+```
 
 ### Відновлення
 
