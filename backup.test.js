@@ -207,7 +207,7 @@ test('кладе знімок під власним префіксом — що�
   // до міграції v3 загинула через три секунди після завантаження.
   const h = snapshotHarness();
   await h.make().runOnce();
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db']);
+  assert.deepEqual(snapshots(h.dir), ['predeploy-2026-09-04T10-15-51Z-30.db']);
   assert.equal(backups(h.dir).length, 0, 'у простір добових бекапів не лізе');
   h.cleanup();
 });
@@ -228,7 +228,7 @@ test('перший вихід версії шле файл у Telegram', async (
   await h.make().runOnce();
   assert.equal(h.docs.length, 1);
   assert.equal(h.docs[0].chat, 44958130);
-  assert.match(h.docs[0].filename, /^deye-predeploy-30\.json$/);
+  assert.match(h.docs[0].filename, /^deye-predeploy-2026-09-04T10-15-51Z-30\.json$/);
   h.cleanup();
 });
 
@@ -239,7 +239,8 @@ test('повторний рестарт тієї самої версії оно�
   await h.make().runOnce();
   await h.make().runOnce();
   assert.equal(h.docs.length, 1, 'та сама версія — та сама подія');
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db']);
+  assert.deepEqual(snapshots(h.dir), ['predeploy-2026-09-04T10-15-51Z-30.db'],
+    'один слот на версію, скільки б разів вона не рестартувала');
   h.cleanup();
 });
 
@@ -248,7 +249,8 @@ test('нова версія шле знову', async () => {
   await h.make('30').runOnce();
   await h.make('31').runOnce();
   assert.equal(h.docs.length, 2);
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db', 'predeploy-31.db']);
+  assert.deepEqual(snapshots(h.dir),
+    ['predeploy-2026-09-04T10-15-51Z-30.db', 'predeploy-2026-09-04T10-15-51Z-31.db']);
   h.cleanup();
 });
 
@@ -271,7 +273,7 @@ test('ротація лишає keep версій і не чіпає щойно 
 
   const files = snapshots(h.dir);
   assert.equal(files.length, 3);
-  assert.ok(files.includes('predeploy-30.db'), `щойно створену видаляти не можна: ${files}`);
+  assert.ok(files.some(f => f.endsWith('-30.db')), `щойно створену видаляти не можна: ${files}`);
   h.cleanup();
 });
 
@@ -287,7 +289,7 @@ test('у дампі для Telegram те саме, що віддає exportAll',
 test('невдала відправка лишає знімок на волюмі — головне збережено', async () => {
   const h = snapshotHarness({ sendFails: true });
   await h.make().runOnce();
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db']);
+  assert.deepEqual(snapshots(h.dir), ['predeploy-2026-09-04T10-15-51Z-30.db']);
   assert.equal(h.errors.length, 1);
   h.cleanup();
 });
@@ -307,7 +309,7 @@ test('збій не кидає — процес мусить вийти чист
 test('без ADMIN_CHAT_ID знімок робиться, але нікуди не летить', async () => {
   const h = snapshotHarness({ chatId: null });
   await h.make().runOnce();
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db']);
+  assert.deepEqual(snapshots(h.dir), ['predeploy-2026-09-04T10-15-51Z-30.db']);
   assert.equal(h.docs.length, 0);
   h.cleanup();
 });
@@ -338,7 +340,7 @@ test('capture робить локальну роботу без мережі —
   const h = snapshotHarness();
   const captured = h.make().capture();
 
-  assert.deepEqual(snapshots(h.dir), ['predeploy-30.db']);
+  assert.deepEqual(snapshots(h.dir), ['predeploy-2026-09-04T10-15-51Z-30.db']);
   assert.equal(h.docs.length, 0, 'capture не має торкатись мережі');
   assert.ok(captured.dump.length > 0);
   h.cleanup();
@@ -357,4 +359,62 @@ test('send надсилає те, що зібрав capture, уже після �
   assert.equal(h.docs.length, 1);
   assert.deepEqual(JSON.parse(h.docs[0].buffer.toString()).users.map(u => u.username), ['petro']);
   fs.rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('у назві стоїть час знімка, а не час народження версії', () => {
+  // FLY_MACHINE_VERSION виявився ULID, а ULID кодує момент СТВОРЕННЯ версії —
+  // у бою це були 10:29, тоді як знімок знявся о 10:54. Відновлюють за
+  // свіжістю даних, тож дата в назві мусить бути датою знімка.
+  const h = snapshotHarness({ version: '01M1NZEQP643WCSAA68MC8TRYX' });
+  h.make('01M1NZEQP643WCSAA68MC8TRYX').capture();
+
+  assert.deepEqual(snapshots(h.dir),
+    ['predeploy-2026-09-04T10-15-51Z-01M1NZEQP643WCSAA68MC8TRYX.db']);
+  h.cleanup();
+});
+
+test('повторний рестарт переносить слот на новий час, не плодячи файлів', async () => {
+  // Тотожність слоту веде версія, а час у назві лише для людини — інакше
+  // кожен рестарт лишав би ще один файл і виштовхував старші версії.
+  const dir = tmpdir();
+  const store = createDb(path.join(dir, 'bot.db'));
+  const at = t => createDeploySnapshot({
+    store, dir, keep: 3, chatId: null, version: '30',
+    sendDocument: async () => {}, log: { info() {}, error() {} },
+    now: () => new Date(t).getTime(),
+  });
+
+  at('2026-09-04T10:00:00Z').capture();
+  at('2026-09-04T18:30:00Z').capture();
+
+  assert.deepEqual(snapshots(dir), ['predeploy-2026-09-04T18-30-00Z-30.db'],
+    'старий файл тієї самої версії має поступитись новому');
+  store.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('другий рестарт тієї самої версії мовчить попри нову назву файлу', async () => {
+  const dir = tmpdir();
+  const store = createDb(path.join(dir, 'bot.db'));
+  const docs = [];
+  const at = t => createDeploySnapshot({
+    store, dir, keep: 3, chatId: 1, version: '30',
+    sendDocument: async () => docs.push(t), log: { info() {}, error() {} },
+    now: () => new Date(t).getTime(),
+  });
+
+  await at('2026-09-04T10:00:00Z').runOnce();
+  await at('2026-09-04T18:30:00Z').runOnce();
+
+  assert.deepEqual(docs, ['2026-09-04T10:00:00Z'], 'версія та сама — подія одна');
+  store.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('підпис у чаті читабельний для людини', () => {
+  const h = snapshotHarness();
+  return h.make().runOnce().then(() => {
+    assert.match(h.docs[0].caption, /2026-09-04 10:15:51/);
+    h.cleanup();
+  });
 });

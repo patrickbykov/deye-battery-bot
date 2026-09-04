@@ -96,6 +96,16 @@ export function createWeeklyExport({
 // секунди після завантаження нової версії.
 export const PREDEPLOY_PREFIX = 'predeploy-';
 
+// Тека може не існувати (у тестах — навмисно). Пошук попередніх знімків не
+// має кидати раніше, ніж до цього дійде VACUUM зі своїм повідомленням.
+const safeReaddir = dir => {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+};
+
 // Telegram у telegram.js має власний таймаут 15 с. У шатдауні стільки чекати
 // не можна: Fly шле SIGKILL через kill_timeout (тут дефолтні 5 с), і на
 // половині очікування процес просто вбʼють.
@@ -105,11 +115,23 @@ export function createDeploySnapshot({
   store, dir, keep = 3, chatId, version, sendDocument, log,
   now = () => Date.now(), sendTimeoutMs = SEND_BUDGET_MS,
 }) {
-  // Слот на версію, а не на час: машина рестартує по кілька разів на день, і
-  // при іменуванні за часом ротація викинула б саме той знімок, заради якого
-  // все й робиться. Без FLY_MACHINE_VERSION лишається час — кожен вихід стає
-  // окремою подією, і це чесніше, ніж вдавати, що версія відома.
-  const slot = version ?? new Date(now()).toISOString().slice(0, 19).replaceAll(':', '-') + 'Z';
+  // Тотожність слоту веде ВЕРСІЯ, а час у назві — лише для людини. Машина
+  // рестартує по кілька разів на день, і якби слот вела назва цілком, кожен
+  // рестарт лишав би ще один файл і виштовхував старші версії з ротації.
+  //
+  // Без FLY_MACHINE_VERSION лишається сам час — тоді кожен вихід є окремою
+  // подією, і це чесніше, ніж вдавати, що версія відома.
+  const at = new Date(now());
+  const stamp = at.toISOString().slice(0, 19).replaceAll(':', '-') + 'Z';
+  const slot = version ? `${stamp}-${version}` : stamp;
+
+  // FLY_MACHINE_VERSION виявився ULID, а ULID кодує момент СТВОРЕННЯ версії:
+  // у бою це були 10:29, тоді як знімок знявся о 10:54. Тому час беремо свій,
+  // а не розбираємо з версії — відновлюють за свіжістю даних, і дата в назві
+  // не має брехати на пів години.
+  const sameVersion = name =>
+    version !== null && version !== undefined
+    && name.startsWith(PREDEPLOY_PREFIX) && name.endsWith(`-${version}.db`);
 
   async function withBudget(promise) {
     let timer;
@@ -130,9 +152,11 @@ export function createDeploySnapshot({
   // обробник сигналу існує, — чекав би на Telegram до трьох секунд.
   function capture() {
     const target = path.join(dir, `${PREDEPLOY_PREFIX}${slot}.db`);
-    // Читаємо ДО запису: наявний файл означає, що ця версія вже виходила,
-    // тобто це повторний рестарт, а не нова версія.
-    const seenBefore = fs.existsSync(target);
+    // Читаємо ДО запису: файл цієї ж версії означає, що вона вже виходила,
+    // тобто це повторний рестарт, а не нова версія. Шукаємо за версією, а не
+    // за повною назвою — назва містить час і щоразу інша.
+    const previous = safeReaddir(dir).filter(sameVersion);
+    const seenBefore = previous.length > 0 || fs.existsSync(target);
 
     // Дамп збирається першим, поки БД точно відкрита: збій VACUUM не має
     // забирати ще й позасмугову копію, яка цінніша за локальну.
@@ -147,10 +171,16 @@ export function createDeploySnapshot({
       fs.rmSync(target, { force: true });
       store.raw.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`);
 
+      // Один файл на версію: попередній знімок тієї самої версії поступається
+      // новішому, інакше серія рестартів заповнила б усю ротацію собою.
+      const current = path.basename(target);
+      for (const stale of previous.filter(f => f !== current)) {
+        fs.rmSync(path.join(dir, stale), { force: true });
+      }
+
       // Те саме правило, що й у добовій ротації: щойно створену копію не
       // видаляємо ніколи, скільки б файлів із пізнішими іменами не лежало.
-      const current = path.basename(target);
-      const others = fs.readdirSync(dir)
+      const others = safeReaddir(dir)
         .filter(f => f.startsWith(PREDEPLOY_PREFIX) && f !== current)
         .sort();
       for (const stale of others.slice(0, Math.max(0, others.length - (keep - 1)))) {
@@ -169,7 +199,7 @@ export function createDeploySnapshot({
 
     try {
       await withBudget(sendDocument(chatId, dump, `deye-predeploy-${slot}.json`,
-        `💾 Копія перед зміною версії (${slot})`));
+        `💾 Копія перед зміною версії, знята ${at.toISOString().slice(0, 19).replace('T', ' ')} UTC`));
       log.info(`Знімок перед деплоєм надіслано: deye-predeploy-${slot}.json`);
     } catch (err) {
       log.error(`Знімок перед деплоєм не надіслано: ${err.message}`);
