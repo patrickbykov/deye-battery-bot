@@ -20,6 +20,13 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
   const { sendMessage, sendPhoto } = telegram;
   const { queryGrafana, renderGrafanaPanel, getDashboardLink } = grafana;
 
+  // Підписка посилається на users(chat_id) зовнішнім ключем, тож рядок
+  // користувача мусить існувати ДО запису. Заразом оновлюємо нік: у Telegram
+  // його міняють, а застарілий нік робить схвалення в адмінці вгадуванням.
+  function ensureUser({ chatId, from }) {
+    store.upsertUser(chatId, from?.username ?? null, from?.first_name ?? null);
+  }
+
   async function eachSubscription(chatId, fn) {
     const inverters = store.getSubscriptions(chatId);
     if (inverters.length === 0) {
@@ -87,18 +94,20 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
       inverters.map(i => `• <code>${i.id}</code> — ${i.name}`).join('\n'));
   });
 
-  handlers.set('/subscribe', async ({ chatId, arg }) => {
+  handlers.set('/subscribe', async ({ chatId, arg, from }) => {
     const inverter = arg && store.getInverter(arg);
     if (!inverter) {
       await sendMessage(chatId, `❌ Об’єкт <code>${arg ?? ''}</code> не знайдено. /list — перелік.`);
       return;
     }
+    ensureUser({ chatId, from });
     const current = store.getSubscriptions(chatId).map(i => i.id);
     store.replaceSubscriptions(chatId, [...new Set([...current, inverter.id])]);
     await sendMessage(chatId, `✅ Підписано на ${inverter.name}`);
   });
 
-  handlers.set('/unsubscribe', async ({ chatId, arg }) => {
+  handlers.set('/unsubscribe', async ({ chatId, arg, from }) => {
+    ensureUser({ chatId, from });
     const current = store.getSubscriptions(chatId).map(i => i.id);
     if (!arg || !current.includes(arg)) {
       await sendMessage(chatId, `❌ Ви не підписані на <code>${arg ?? ''}</code>. /mysubs — перелік.`);

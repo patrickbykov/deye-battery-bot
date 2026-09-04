@@ -73,6 +73,11 @@ async function processUpdate(update) {
   const msg = update.message;
   if (!msg?.text) return;
 
+  // Тільки приватні чати. У групі chat.id належить групі, а from.id — людині;
+  // без цієї перевірки id групи потрапив би в users як «користувач», і вся
+  // логіка підписок поїхала б.
+  if (msg.chat.type !== 'private') return;
+
   const parsed = parseCommand(msg.text);
   if (!parsed) return;
 

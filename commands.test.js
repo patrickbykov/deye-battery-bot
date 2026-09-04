@@ -134,3 +134,22 @@ test('лукап команд не піддається __proto__', async () => 
   assert.equal(commands.get('__proto__'), undefined);
   assert.equal(commands.get('constructor'), undefined);
 });
+
+test('/subscribe від невідомого боту користувача створює його, а не падає', async () => {
+  // Спіймано в проді: FOREIGN KEY constraint failed. Підписка посилається на
+  // users(chat_id), а рядка користувача не існувало — його ніхто не створював.
+  const { commands, store } = harness();
+  const ctx = { chatId: 999, from: { username: 'nova', first_name: 'Нова' }, arg: 'INV1' };
+
+  await commands.get('/subscribe')(ctx);
+
+  assert.deepEqual(store.getSubscriptions(999).map(i => i.id), ['INV1']);
+  assert.equal(store.getUser(999).username, 'nova');
+});
+
+test('нік оновлюється при кожному зверненні', async () => {
+  const { commands, store } = harness();
+  await commands.get('/subscribe')({ chatId: 999, from: { username: 'old' }, arg: 'INV1' });
+  await commands.get('/subscribe')({ chatId: 999, from: { username: 'new' }, arg: 'INV2' });
+  assert.equal(store.getUser(999).username, 'new');
+});
