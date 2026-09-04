@@ -1,10 +1,15 @@
 import fetch from 'node-fetch';
-import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, TG_API, PORT } from './config.js';
-import { answerCallbackQuery } from './telegram.js';
+import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, TG_API, PORT } from './config.js';
+import { answerCallbackQuery, sendMessage } from './telegram.js';
 import { commands } from './commands.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer } from './http-server.js';
+import { createDb, DEFAULT_DB_PATH } from './db.js';
+import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
+import { queryGrafana } from './grafana.js';
+
+const store = createDb(DEFAULT_DB_PATH);
 
 let lastUpdateId = 0;
 let lastPollSuccessAt = null;
@@ -151,6 +156,19 @@ async function main() {
     console.error('Стартова ініціалізація не вдалась:', redact(err.message));
   }
 
+  // Одна ітерація одразу, далі за інтервалом: інакше після деплою бот 5 хв
+  // не знав би жодного інвертора.
+  const discovery = createDiscovery({
+    store,
+    queryGrafana,
+    notifyAdmin: msg => (ADMIN_CHAT_ID ? sendMessage(ADMIN_CHAT_ID, msg) : Promise.resolve()),
+    log: console,
+    bucket: INFLUXDB_BUCKET,
+    dashboardUid: DASHBOARD_UID,
+  });
+  discovery.runOnce();
+  setInterval(() => discovery.runOnce(), DISCOVERY_INTERVAL_MS).unref();
+
   console.log('Bot is running! Polling for messages...');
 
   lastPollSuccessAt = Date.now();
@@ -167,6 +185,24 @@ async function main() {
     await new Promise(r => setTimeout(r, 1000));
   }
 }
+
+// Fly шле SIGTERM на кожному деплої й рестарті машини. Без чекпойнта
+// bot.db-wal росте, а на волюмі з жорсткими вбивствами це реальний ризик.
+function shutdown(signal) {
+  console.log(`${signal}: завершуюсь`);
+  try {
+    store.raw.pragma('wal_checkpoint(TRUNCATE)');
+    store.close();
+  } catch (err) {
+    console.error('Помилка закриття БД:', err.message);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', err => console.error('unhandledRejection:', redact(String(err?.message ?? err))));
+process.on('uncaughtException', err => console.error('uncaughtException:', redact(err.message)));
 
 main().catch(err => {
   console.error('Fatal:', redact(err.message));
