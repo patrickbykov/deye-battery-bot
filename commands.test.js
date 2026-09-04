@@ -388,3 +388,21 @@ test('/status пояснює знак потужності словами', asyn
   assert.match(sent[0], /-405/);
   assert.match(sent[0], /заряджається/, 'відʼємна потужність — це заряд');
 });
+
+test('/help ставить щоденні команди перед налаштуванням', async () => {
+  // /status і /graph використовують постійно, /subscribe — раз. Порядок у
+  // довідці має збігатися з порядком у меню Telegram, інакше людина шукає
+  // очима те, що вже бачила в іншому місці.
+  const { commands, sent, ctx } = harness();
+  await commands.get('/help')(ctx);
+
+  const text = sent[0].text;
+  assert.ok(text.indexOf('/status') < text.indexOf('/subscribe'), '/status має бути вище');
+  assert.ok(text.indexOf('/graph') < text.indexOf('/subscribe'), '/graph має бути вище');
+});
+
+test('/help не обіцяє аргумент там, де тепер клавіатура', async () => {
+  const { commands, sent, ctx } = harness();
+  await commands.get('/help')(ctx);
+  assert.doesNotMatch(sent[0].text, /\/subscribe &lt;id&gt;/);
+});

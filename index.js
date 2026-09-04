@@ -276,14 +276,17 @@ async function main() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // Щоденне — зверху. Telegram показує цей список у тому порядку,
+        // у якому його надіслано, тож /status і /graph мають бути першими:
+        // підписку налаштовують раз, а стан дивляться постійно.
         commands: [
-          { command: 'list', description: '📋 Доступні об’єкти' },
-          { command: 'subscribe', description: '➕ Підписатись на об’єкт' },
-          { command: 'unsubscribe', description: '➖ Відписатись' },
-          { command: 'mysubs', description: '📌 Мої підписки' },
-          { command: 'forgetme', description: '🗑 Видалити мої дані' },
           { command: 'status', description: '🔋 Поточний стан' },
           { command: 'graph', description: '📊 Графік за 24 години' },
+          { command: 'list', description: '📋 Доступні об’єкти' },
+          { command: 'subscribe', description: '➕ Обрати об’єкти' },
+          { command: 'mysubs', description: '📌 Мої підписки' },
+          { command: 'unsubscribe', description: '➖ Відписатись' },
+          { command: 'forgetme', description: '🗑 Видалити мої дані' },
           { command: 'help', description: 'ℹ️ Список команд' }
         ]
       })

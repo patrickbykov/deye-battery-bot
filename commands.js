@@ -99,16 +99,22 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
   const handlers = new Map();
 
   handlers.set('/help', async ({ chatId }) => {
+    // Порядок не випадковий: зверху те, чим користуються щодня, знизу —
+    // те, що налаштовують одного разу. Він збігається з порядком меню
+    // Telegram, щоб людина не шукала очима те, що вже бачила.
     await sendMessage(chatId, `🤖 <b>Моніторинг батарей</b>
 
-/list — доступні об’єкти
-/subscribe &lt;id&gt; — підписатись
-/unsubscribe &lt;id&gt; — відписатись
-/mysubs — мої підписки
 /status — поточний стан
 /graph — графік за 24 години
+
+/list — доступні об’єкти
+/subscribe — обрати об’єкти й подати заявку
+/mysubs — мої підписки
+/unsubscribe — відписатись від об’єкта
+/forgetme — видалити мої дані
 /help — ця довідка`);
   });
+
   handlers.set('/start', handlers.get('/help'));
 
   handlers.set('/list', async ({ chatId }) => {
