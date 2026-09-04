@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readBody } from './http-server.js';
-import { loginPage, usersPage } from './admin-views.js';
+import { loginPage, usersPage, objectsPage } from './admin-views.js';
 import {
   verifyPassword, deriveKeys, signSession, verifySession, csrfToken, csrfValid, throttleDecision,
 } from './admin-auth.js';
@@ -96,7 +96,14 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
     { method: 'GET', path: '/admin/users', handler: guard(async (req, res, { session: s }) => {
       html(res, 200, usersPage({
         users: store.listUsersWithSubscriptions(),
+        csrf: csrfToken(s.sid, keys.csrf),
+      }));
+    }) },
+
+    { method: 'GET', path: '/admin/objects', handler: guard(async (req, res, { session: s }) => {
+      html(res, 200, objectsPage({
         inverters: store.getAllInverters(),
+        waiting: store.countPendingUsers(),
         csrf: csrfToken(s.sid, keys.csrf),
       }));
     }) },
@@ -115,7 +122,7 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
           log.info(`Адмінка: обʼєкт ${inverter.id} → «${wanted}»`);
         }
       }
-      redirect(res, '/admin/users');
+      redirect(res, '/admin/objects');
     }) },
 
     { method: 'POST', path: '/admin/users', handler: guard(async (req, res, { session: s }) => {

@@ -1,6 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginPage, usersPage } from './admin-views.js';
+import { loginPage, usersPage, objectsPage } from './admin-views.js';
+
+const users = [{
+  chat_id: 42, username: 'petro', first_name: '<img src=x onerror=alert(1)>',
+  status: 'pending', requested_at: '2026-09-04T06:00:00Z',
+  inverters: [{ id: 'INV1', name: 'Перший & головний' }],
+}];
+const inverters = [
+  { id: '2512151417', name: 'Клочківська 117' },
+  { id: 'SN-2', name: 'SN-2' },
+];
+
+// --- Вхід ---
 
 test('сторінка логіну не має JavaScript', () => {
   const html = loginPage({});
@@ -12,25 +24,58 @@ test('сторінка логіну не приймає параметр next �
   assert.doesNotMatch(loginPage({}), /next/i);
 });
 
-const users = [{
-  chat_id: 42, username: 'petro', first_name: '<img src=x onerror=alert(1)>',
-  status: 'pending', requested_at: '2026-09-04T06:00:00Z',
-  inverters: [{ id: 'INV1', name: 'Перший & головний' }],
-}];
+test('на сторінці логіну навігації немає — показувати нікуди', () => {
+  assert.doesNotMatch(loginPage({}), /href="\/admin\/objects"/);
+});
+
+// --- Навігація ---
+
+test('обидві сторінки ведуть одна до одної', () => {
+  for (const html of [usersPage({ users, csrf: 't' }), objectsPage({ inverters, csrf: 't' })]) {
+    assert.match(html, /href="\/admin\/users"/);
+    assert.match(html, /href="\/admin\/objects"/);
+  }
+});
+
+test('поточний розділ позначено, і він не посилається сам на себе', () => {
+  assert.match(usersPage({ users, csrf: 't' }), /aria-current="page"[^>]*>\s*Користувачі/);
+  assert.match(objectsPage({ inverters, csrf: 't' }), /aria-current="page"[^>]*>\s*Об/);
+});
+
+test('лічильник заявок видно і зі сторінки обʼєктів', () => {
+  // Інакше адмін, що зайшов перейменувати обʼєкт, не побачить, що хтось чекає.
+  const html = objectsPage({ inverters, csrf: 't', waiting: 3 });
+  assert.match(html, /3/);
+});
+
+test('нуль заявок не малює порожній лічильник', () => {
+  assert.doesNotMatch(objectsPage({ inverters, csrf: 't', waiting: 0 }), /class="badge"/);
+});
+
+test('вихід є на обох сторінках і захищений CSRF', () => {
+  for (const html of [usersPage({ users, csrf: 'tok-9' }), objectsPage({ inverters, csrf: 'tok-9' })]) {
+    assert.match(html, /action="\/admin\/logout"/);
+    for (const form of html.split('<form').slice(1)) {
+      assert.match(form, /name="csrf" value="tok-9"/);
+    }
+  }
+});
+
+// --- Користувачі ---
 
 test('ім’я з тегом рендериться як текст, а не виконується', () => {
-  // Ім'я приходить з Telegram довільним Unicode: людина сама його обирає.
   const html = usersPage({ users, csrf: 'tok' });
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /&lt;img src=x/);
 });
 
-test('амперсанд у назві об’єкта екранується', () => {
+test('амперсанд у назві обʼєкта екранується', () => {
   assert.match(usersPage({ users, csrf: 'tok' }), /Перший &amp; головний/);
 });
 
 test('у розмітці немає жодного script', () => {
   assert.doesNotMatch(usersPage({ users, csrf: 'tok' }), /<script/i);
+  assert.doesNotMatch(objectsPage({ inverters, csrf: 'tok' }), /<script/i);
 });
 
 test('CSRF-токен присутній у формі', () => {
@@ -38,11 +83,7 @@ test('CSRF-токен присутній у формі', () => {
 });
 
 test('приховане known на кожен відрендерений рядок', () => {
-  // Невідмічені чекбокси браузер не надсилає взагалі. Без known[] адмін, що
-  // відкрив сторінку вчора й натиснув «Зберегти» сьогодні, зняв би схвалення
-  // з усіх, кого схвалили за цей час.
-  const html = usersPage({ users, csrf: 'tok' });
-  assert.match(html, /name="known" value="42"/);
+  assert.match(usersPage({ users, csrf: 'tok' }), /name="known" value="42"/);
 });
 
 test('схвалений має відмічений чекбокс', () => {
@@ -50,41 +91,30 @@ test('схвалений має відмічений чекбокс', () => {
   assert.match(usersPage({ users: approved, csrf: 't' }), /name="approve" value="42" checked/);
 });
 
-test('порожній список не ламає сторінку', () => {
-  const html = usersPage({ users: [], csrf: 't' });
-  assert.match(html, /Користувачів|немає/i);
+test('порожній список користувачів не ламає сторінку', () => {
+  assert.match(usersPage({ users: [], csrf: 't' }), /Користувачів|немає/i);
 });
 
-const inverters = [
-  { id: '2512151417', name: 'Клочківська 117' },
-  { id: 'SN-2', name: 'SN-2' },
-];
+// --- Обʼєкти ---
 
 test('обʼєкти мають поле для назви з поточним значенням', () => {
-  const html = usersPage({ users, csrf: 'tok', inverters });
-  assert.match(html, /name="name:2512151417" value="Клочківська 117"/);
+  assert.match(objectsPage({ inverters, csrf: 'tok' }),
+    /name="name:2512151417" value="Клочківська 117"/);
 });
 
 test('серійник видно поруч — за ним обʼєкт шукають у логах і в Grafana', () => {
-  assert.match(usersPage({ users, csrf: 'tok', inverters }), /2512151417/);
+  assert.match(objectsPage({ inverters, csrf: 'tok' }), /2512151417/);
 });
 
 test('назва обʼєкта екранується', () => {
   const evil = [{ id: 'X', name: '"><script>alert(1)</script>' }];
-  const html = usersPage({ users, csrf: 'tok', inverters: evil });
+  const html = objectsPage({ inverters: evil, csrf: 'tok' });
   assert.doesNotMatch(html, /<script/i);
   assert.match(html, /&quot;&gt;&lt;script&gt;/);
 });
 
-test('форма обʼєктів теж має CSRF', () => {
-  const html = usersPage({ users, csrf: 'tok-9', inverters });
-  const forms = html.split('<form').slice(1);
-  for (const form of forms) {
-    assert.match(form, /name="csrf" value="tok-9"/, 'кожна форма, що змінює стан');
-  }
-});
-
-test('без обʼєктів секція не рендериться порожньою', () => {
-  const html = usersPage({ users, csrf: 'tok', inverters: [] });
+test('без обʼєктів сторінка пояснює, звідки вони беруться', () => {
+  const html = objectsPage({ inverters: [], csrf: 'tok' });
   assert.doesNotMatch(html, /name="name:/);
+  assert.match(html, /колектор|InfluxDB|зʼявля/i);
 });

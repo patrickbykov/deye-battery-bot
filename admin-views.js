@@ -82,6 +82,22 @@ const CSS = `
   .empty{border:1px dashed var(--rule);border-radius:10px;padding:2rem 1.25rem;
     color:var(--ink-2);text-align:center}
 
+  /* Навігація на два розділи: вкладки, не бічна панель. Сайдбар на дві
+     сторінки — це меблі заради меблів, і на телефоні він лише відбирає місце. */
+  nav{display:flex;align-items:center;gap:1.25rem;margin:0 0 1.75rem;
+    border-bottom:1px solid var(--rule);padding-bottom:.6rem;flex-wrap:wrap}
+  nav a{color:var(--ink-2);text-decoration:none;padding:.15rem 0;
+    border-bottom:2px solid transparent;display:inline-flex;align-items:center;gap:.4rem}
+  nav a:hover{color:var(--ink)}
+  nav a[aria-current]{color:var(--ink);font-weight:600;border-bottom-color:var(--live)}
+  nav a:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+  nav .spacer{flex:1 1 auto}
+  nav form{margin:0}
+  nav button{background:transparent;color:var(--ink-2);border-color:var(--rule);
+    padding:.35rem .7rem;font-size:.85rem;font-weight:500}
+  .badge{background:var(--wait);color:#1b1300;border-radius:999px;
+    padding:0 .4rem;font-size:.75rem;font-weight:650;line-height:1.35}
+
   h2{font-size:1.05rem;font-weight:650;margin:2.5rem 0 .35rem}
   .hint{color:var(--ink-2);font-size:.875rem;margin:0 0 .9rem}
   .obj{display:flex;align-items:center;gap:.9rem;padding:.75rem 1rem}
@@ -115,6 +131,25 @@ const page = (title, body) => `<!doctype html>
 <meta name="robots" content="noindex">
 <title>${esc(title)}</title><style>${CSS}</style></head>
 <body><div class="wrap">${body}</div></body></html>`;
+
+// Лічильник заявок висить у навігації, а не лише на сторінці користувачів:
+// адмін, що зайшов перейменувати обʼєкт, інакше не побачив би, що хтось чекає.
+function nav(current, csrf, waiting = 0) {
+  const link = (href, label, extra = '') =>
+    `<a href="${href}"${current === href ? ' aria-current="page"' : ''}>
+       ${label}${extra}</a>`;
+  const badge = waiting > 0 ? ` <span class="badge">${waiting}</span>` : '';
+
+  return `<nav>
+    ${link('/admin/users', 'Користувачі', badge)}
+    ${link('/admin/objects', 'Обʼєкти')}
+    <span class="spacer"></span>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="${esc(csrf)}">
+      <button type="submit">Вийти</button>
+    </form>
+  </nav>`;
+}
 
 // Дата без секунд і без року: рішення ухвалюють за свіжістю заявки, а не
 // за точним часом.
@@ -155,29 +190,30 @@ export function loginPage({ error } = {}) {
   </div>`);
 }
 
-// Обʼєкти показуємо серійником і полем назви: серійник лишається видимим, бо
-// саме за ним обʼєкт шукають у Grafana й у логах, а назва — те, що бачать люди.
-function objectsSection(inverters, csrf) {
-  if (!inverters?.length) return '';
+export function objectsPage({ inverters, csrf, waiting = 0 }) {
+  const body = !inverters?.length
+    ? `<p class="empty">Обʼєктів ще немає.<br>
+         Вони зʼявляються самі, щойно колектор запише перші дані в InfluxDB.</p>`
+    : `<p class="hint">Назву бачать користувачі — у списку підписок і в сповіщеннях.
+         Порожнє поле поверне серійник.</p>
+       <form method="post" action="/admin/inverters">
+         <input type="hidden" name="csrf" value="${esc(csrf)}">
+         <ul class="board">${inverters.map(inv => `<li class="obj">
+           <span class="id">${esc(inv.id)}</span>
+           <input type="text" name="name:${esc(inv.id)}" value="${esc(inv.name ?? inv.id)}"
+                  aria-label="Назва обʼєкта ${esc(inv.id)}" maxlength="60">
+         </li>`).join('')}</ul>
+         <div class="actions"><button type="submit">Зберегти назви</button></div>
+       </form>`;
 
-  const rows = inverters.map(inv => `<li class="obj">
-    <span class="id">${esc(inv.id)}</span>
-    <input type="text" name="name:${esc(inv.id)}" value="${esc(inv.name ?? inv.id)}"
-           aria-label="Назва обʼєкта ${esc(inv.id)}" maxlength="60">
-  </li>`).join('');
-
-  return `
-    <h2>Обʼєкти</h2>
-    <p class="hint">Назву бачать користувачі — у списку підписок і в сповіщеннях.
-       Порожнє поле поверне серійник.</p>
-    <form method="post" action="/admin/inverters">
-      <input type="hidden" name="csrf" value="${esc(csrf)}">
-      <ul class="board">${rows}</ul>
-      <div class="actions"><button type="submit">Зберегти назви</button></div>
-    </form>`;
+  // Серійник лишається видимим: саме за ним обʼєкт шукають у Grafana й у логах.
+  return page('Обʼєкти', `
+    ${nav('/admin/objects', csrf, waiting)}
+    <header><h1>Обʼєкти</h1></header>
+    ${body}`);
 }
 
-export function usersPage({ users, csrf, inverters = [] }) {
+export function usersPage({ users, csrf }) {
   const waiting = users.filter(u => u.status === 'pending').length;
 
   const tally = users.length === 0 ? ''
@@ -186,10 +222,10 @@ export function usersPage({ users, csrf, inverters = [] }) {
       : '<p class="tally">Усі заявки розглянуті</p>';
 
   if (users.length === 0) {
-    return page('Доступ', `
-      <header><h1>Доступ до об’єктів</h1></header>
-      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>
-      ${objectsSection(inverters, csrf)}`);
+    return page('Користувачі', `
+      ${nav('/admin/users', csrf, 0)}
+      <header><h1>Користувачі</h1></header>
+      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>`);
   }
 
   const lines = users.map(user => {
@@ -221,9 +257,12 @@ export function usersPage({ users, csrf, inverters = [] }) {
     </li>`;
   }).join('');
 
-  return page('Доступ', `
+  return page('Користувачі', `
+    ${/* Бейдж потрібен, щоб побачити заявки з іншої сторінки. Тут їх видно
+         й так, а заголовок каже це точніше за голе число. */ ''}
+    ${nav('/admin/users', csrf, 0)}
     <header>
-      <h1>Доступ до об’єктів</h1>
+      <h1>Користувачі</h1>
       ${tally}
     </header>
     <form method="post" action="/admin/users">
@@ -234,9 +273,5 @@ export function usersPage({ users, csrf, inverters = [] }) {
         <span class="tally">Вимкнений перемикач знімає доступ.</span>
       </div>
     </form>
-    ${objectsSection(inverters, csrf)}
-    <form class="actions ghost" method="post" action="/admin/logout">
-      <input type="hidden" name="csrf" value="${esc(csrf)}">
-      <button type="submit">Вийти</button>
-    </form>`);
+`);
 }

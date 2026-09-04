@@ -164,6 +164,11 @@ export function createDb(filename) {
                                            first_name = excluded.first_name
       `).run(chatId, username, firstName),
 
+    // Окремий лічильник, щоб сторінка обʼєктів не вантажила всіх користувачів
+    // із їхніми підписками заради одного числа в навігації.
+    countPendingUsers: () =>
+      db.prepare("SELECT count(*) n FROM users WHERE status = 'pending'").get().n,
+
     getUser: chatId =>
       db.prepare('SELECT * FROM users WHERE chat_id = ?').get(chatId),
 
