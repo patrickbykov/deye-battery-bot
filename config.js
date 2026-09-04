@@ -11,6 +11,7 @@ export const INFLUXDB_BUCKET = process.env.INFLUXDB_BUCKET || 'monitoring';
 // синтаксично валідний запит, що мовчки повертає порожньо.
 export const DEFAULT_INVERTER_ID = process.env.DEFAULT_INVERTER_ID;
 export const PORT = process.env.PORT || 8080;
+export const GRAFANA_WEBHOOK_TOKEN = process.env.GRAFANA_WEBHOOK_TOKEN;
 export const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null;
 
 export const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;

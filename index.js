@@ -1,11 +1,12 @@
 import fetch from 'node-fetch';
-import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, TG_API, PORT } from './config.js';
+import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, GRAFANA_WEBHOOK_TOKEN, TG_API, PORT } from './config.js';
 import { answerCallbackQuery, sendMessage, sendPhoto, editMessageReplyMarkup, editMessageText } from './telegram.js';
 import { parseCommand, createCommands, createCallbacks } from './commands.js';
 import { parseCallback } from './subs-keyboard.js';
+import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
-import { createHttpServer } from './http-server.js';
+import { createHttpServer, readBody } from './http-server.js';
 import { createDb, DEFAULT_DB_PATH } from './db.js';
 import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
 import { queryGrafana, renderGrafanaPanel, getDashboardLink } from './grafana.js';
@@ -168,6 +169,33 @@ async function pollUpdates() {
 // Поки що єдиний маршрут. Далі сюди стануть вебхук Grafana (задача 19) і
 // адмінка (22-23); health лишається поза таблицею й обробляється першим.
 const routes = [
+  {
+    method: 'POST',
+    path: '/hooks/grafana',
+    handler: async (req, res) => {
+      if (!webhookAuthorized(req.headers.authorization, GRAFANA_WEBHOOK_TOKEN)) {
+        // Без WWW-Authenticate: не запрошуємо браузер до діалогу й не
+        // повідомляємо деталей.
+        console.warn('Вебхук: відмова автентифікації');
+        res.writeHead(401).end();
+        return;
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse((await readBody(req, { limitBytes: 256 * 1024 })).toString());
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain' }).end('bad json');
+        return;
+      }
+
+      const alerts = parseGrafanaWebhook(payload);
+      console.log(`Вебхук: ${alerts.length} алерт(ів)` +
+        alerts.map(a => ` [${a.status} inverter=${a.inverterId ?? '—'}]`).join(''));
+
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+    },
+  },
   {
     method: 'GET',
     path: '/robots.txt',
