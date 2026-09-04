@@ -1,4 +1,4 @@
-import { toPoint, toLineProtocol, selectNewPoints } from './transform.js';
+import { toPoint, toGridPoint, toLineProtocol, selectNewPoints } from './transform.js';
 
 // Перелік інверторів рідко змінюється, але не є вічним: у станцію можуть
 // додати пристрій. Перечитуємо його раз на годину, а не щоцикл.
@@ -33,10 +33,18 @@ export function createCollector({ deye, influx, log, now = Date.now }) {
     // не має позбавляти даних решту об'єктів.
     const points = [];
     for (const device of devices) {
+      // Батарея і мережа ловляться окремо: зникнення живлення — критичніший
+      // сигнал за SOC, і зіпсоване поле батареї не має його ховати.
       try {
         points.push(toPoint(device));
       } catch (err) {
-        log.warn(`Точку відхилено: ${err.message}`);
+        log.warn(`Точку батареї відхилено: ${err.message}`);
+      }
+      try {
+        const grid = toGridPoint(device);
+        if (grid) points.push(grid);
+      } catch (err) {
+        log.warn(`Точку мережі відхилено: ${err.message}`);
       }
     }
 

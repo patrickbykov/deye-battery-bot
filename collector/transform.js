@@ -20,6 +20,51 @@ const RANGES = {
   temperature: [-50, 150],
 };
 
+// Мережа окремим виміром, а не полями в `battery`: це інша сутність, і
+// змішувати їх означало б, що назва виміру бреше.
+const GRID_PHASES = ['GridVoltageL1', 'GridVoltageL2', 'GridVoltageL3'];
+
+const GRID_RANGES = {
+  voltage: [0, 500],
+  frequency: [0, 100],
+  power: [-100000, 100000],
+};
+
+export function toGridPoint(deviceData) {
+  const { deviceSn, collectionTime } = deviceData;
+  if (!Number.isFinite(collectionTime)) return null;
+
+  const byKey = new Map(deviceData.dataList.map(d => [d.key, d.value]));
+  const phases = GRID_PHASES.map(key => Number(byKey.get(key))).filter(Number.isFinite);
+  // Не всі пристрої віддають ці ключі. Вигадати нулі означало б повідомити
+  // про зникнення мережі там, де її просто не вимірюють.
+  if (phases.length === 0) return null;
+
+  const fields = {
+    // Максимум, а не сума й не перша фаза: втрата однієї фази — це не
+    // блекаут, і лише зникнення всіх трьох дає нуль.
+    voltage: Math.max(...phases),
+    frequency: Number(byKey.get('GridFrequency')),
+    power: Number(byKey.get('TotalGridPower')),
+  };
+
+  for (const [field, value] of Object.entries(fields)) {
+    if (!Number.isFinite(value)) {
+      // Частковий набір краще за відсутність: напруга — головний сигнал.
+      if (field === 'voltage') return null;
+      delete fields[field];
+      continue;
+    }
+    const [min, max] = GRID_RANGES[field];
+    if (value < min || value > max) {
+      if (field === 'voltage') return null;
+      delete fields[field];
+    }
+  }
+
+  return { measurement: 'grid', inverter: deviceSn, timestamp: collectionTime, fields };
+}
+
 export function toPoint(deviceData) {
   const { deviceSn, collectionTime } = deviceData;
 
@@ -44,7 +89,7 @@ export function toPoint(deviceData) {
 
   fields.state = Math.sign(fields.power);
 
-  return { inverter: deviceSn, timestamp: collectionTime, fields };
+  return { measurement: 'battery', inverter: deviceSn, timestamp: collectionTime, fields };
 }
 
 // Екранування за специфікацією line protocol: у тегах — кома, знак рівності
@@ -54,13 +99,13 @@ function escapeTag(value) {
 }
 
 export function toLineProtocol(points) {
-  return points.map(({ inverter, timestamp, fields }) => {
+  return points.map(({ measurement = 'battery', inverter, timestamp, fields }) => {
     // Без суфікса `i`: таблиця `battery` тримає всі шість полів як float,
     // і integer у ній дає HTTP 400 table schema conflict.
     const fieldSet = Object.entries(fields)
       .map(([key, value]) => `${key}=${value}`)
       .join(',');
-    return `battery,inverter=${escapeTag(inverter)} ${fieldSet} ${timestamp}`;
+    return `${measurement},inverter=${escapeTag(inverter)} ${fieldSet} ${timestamp}`;
   }).join('\n');
 }
 

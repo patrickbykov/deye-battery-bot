@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toPoint, toLineProtocol, selectNewPoints } from './transform.js';
+import { toPoint, toGridPoint, toLineProtocol, selectNewPoints } from './transform.js';
 
 // Форма з docs/deye-cloud-api.md — реальна відповідь device/latest, обрізана.
 function deviceData(overrides = {}) {
@@ -15,6 +15,11 @@ function deviceData(overrides = {}) {
       { key: 'BatteryTotalCurrent', value: '1.06', unit: 'A' },
       { key: 'BatteryPower', value: '57', unit: 'W' },
       { key: 'Temperature- Battery', value: '26.00', unit: '℃' },
+      { key: 'GridVoltageL1', value: '237.30', unit: 'V' },
+      { key: 'GridVoltageL2', value: '234.00', unit: 'V' },
+      { key: 'GridVoltageL3', value: '238.30', unit: 'V' },
+      { key: 'GridFrequency', value: '50.00', unit: 'Hz' },
+      { key: 'TotalGridPower', value: '248', unit: 'W' },
     ],
     ...overrides,
   };
@@ -97,4 +102,49 @@ test('відкидає точку, давнішу за вже записану',
   const point = toPoint(deviceData({ collectionTime: 1788455000 }));
   const seen = new Map([['2000000001', 1788455061]]);
   assert.deepEqual(selectNewPoints([point], seen), []);
+});
+
+test('бере максимум із трьох фаз, а не першу-ліпшу', () => {
+  // Втрата однієї фази — це не блекаут: інвертор досі має мережу. Нулем має
+  // стати максимум, тобто всі три разом.
+  const point = toGridPoint(deviceData());
+  assert.equal(point.fields.voltage, 238.3);
+  assert.equal(point.fields.frequency, 50);
+  assert.equal(point.fields.power, 248);
+});
+
+test('зникнення мережі дає нуль напруги', () => {
+  const dead = deviceData();
+  dead.dataList = dead.dataList.map(d =>
+    d.key.startsWith('GridVoltage') ? { ...d, value: '0.00' } : d);
+  assert.equal(toGridPoint(dead).fields.voltage, 0);
+});
+
+test('обʼєкт без даних мережі не дає точки', () => {
+  // Не всі пристрої віддають ці ключі; вигадувати нулі означало б
+  // повідомити про блекаут там, де його немає.
+  const noGrid = deviceData();
+  noGrid.dataList = noGrid.dataList.filter(d => !d.key.startsWith('Grid') && d.key !== 'TotalGridPower');
+  assert.equal(toGridPoint(noGrid), null);
+});
+
+test('точка мережі має свій вимір і той самий тег', () => {
+  const point = toGridPoint(deviceData());
+  assert.equal(point.measurement, 'grid');
+  assert.equal(point.inverter, '2000000001');
+  assert.equal(point.timestamp, 1788455061);
+});
+
+test('line protocol пише обидва виміри в одному запиті', () => {
+  const lines = toLineProtocol([toPoint(deviceData()), toGridPoint(deviceData())]).split('\n');
+  assert.match(lines[0], /^battery,inverter=/);
+  assert.match(lines[1], /^grid,inverter=/);
+  assert.match(lines[1], /voltage=238\.3/);
+});
+
+test('дедуп не губить другу точку того самого пристрою', () => {
+  // Обидві точки мають однаковий inverter і timestamp — наївний дедуп за
+  // ключем інвертора викинув би одну з них.
+  const points = [toPoint(deviceData()), toGridPoint(deviceData())];
+  assert.equal(selectNewPoints(points, new Map()).length, 2);
 });

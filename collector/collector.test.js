@@ -76,3 +76,36 @@ test('не звертається до Influx, коли писати нічог�
   await collector.runCycle();
   assert.deepEqual(written, []);
 });
+
+function withGrid(sn, collectionTime, over = {}) {
+  const d = device(sn, collectionTime);
+  d.dataList = [...d.dataList,
+    { key: 'GridVoltageL1', value: over.v ?? '237.30' },
+    { key: 'GridVoltageL2', value: over.v ?? '234.00' },
+    { key: 'GridVoltageL3', value: over.v ?? '238.30' },
+    { key: 'GridFrequency', value: '50.00' },
+    { key: 'TotalGridPower', value: '248' },
+  ];
+  return d;
+}
+
+test('пише обидва виміри — батарею і мережу', async () => {
+  const { collector, written } = harness([[withGrid('SN1', 1788455061)]]);
+  await collector.runCycle();
+  assert.match(written[0], /battery,inverter=SN1/);
+  assert.match(written[0], /grid,inverter=SN1/);
+});
+
+test('бита телеметрія батареї не засліплює щодо мережі', async () => {
+  // Блекаут — критичніший сигнал за SOC. Якщо батарейні поля зіпсуті, дані
+  // мережі все одно мають дійти.
+  const broken = withGrid('SN1', 1788455061);
+  broken.dataList = broken.dataList.map(d => d.key === 'SOC' ? { ...d, value: '6500' } : d);
+
+  const { collector, written, warnings } = harness([[broken]]);
+  await collector.runCycle();
+
+  assert.match(written.join(''), /grid,inverter=SN1/);
+  assert.doesNotMatch(written.join(''), /battery,inverter=SN1/);
+  assert.match(warnings.join(' '), /SN1/);
+});
