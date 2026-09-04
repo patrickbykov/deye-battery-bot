@@ -6,7 +6,7 @@ import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
 import { createAdminRoutes } from './admin-routes.js';
-import { createBackup, createWeeklyExport, BACKUP_INTERVAL_MS } from './backup.js';
+import { createBackup, createWeeklyExport, createDeploySnapshot, BACKUP_INTERVAL_MS } from './backup.js';
 import { throttleDecision } from './admin-auth.js';
 import path from 'node:path';
 import { healthStatus } from './health.js';
@@ -348,16 +348,41 @@ async function main() {
   }
 }
 
-// Fly шле SIGTERM на кожному деплої й рестарті машини. Без чекпойнта
-// bot.db-wal росте, а на волюмі з жорсткими вбивствами це реальний ризик.
-function shutdown(signal) {
+// Fly шле SIGTERM на кожному деплої й рестарті машини (у логах видно SIGINT
+// від init — ловимо обидва). Без чекпойнта bot.db-wal росте, а на волюмі з
+// жорсткими вбивствами це реальний ризик.
+//
+// Тут же знімається копія стану, яким він був за мить до появи нової версії:
+// щодобовий бекап кладеться на той самий волюм і перезаписується на кожному
+// старті, тож він не рятує від поганої міграції. Цей — рятує.
+const deploySnapshot = createDeploySnapshot({
+  store, dir: path.dirname(DEFAULT_DB_PATH), keep: 3,
+  chatId: ADMIN_CHAT_ID, version: process.env.FLY_MACHINE_VERSION ?? null,
+  sendDocument, log: console,
+});
+
+// Одна спроба на процес: Fly може надіслати другий сигнал, поки триває
+// відправка, і без прапорця ми пішли б у мережу вдруге з тим самим бюджетом.
+let shuttingDown = false;
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`${signal}: завершуюсь`);
+
+  // Порядок навмисний: спершу все локальне й швидке, і лише потім мережа.
+  // Після close() базі вже нічого не загрожує, тож SIGKILL посеред відправки
+  // коштує самої лише ненадісланої копії.
+  let captured;
   try {
+    captured = deploySnapshot.capture();
     store.raw.pragma('wal_checkpoint(TRUNCATE)');
     store.close();
   } catch (err) {
     console.error('Помилка закриття БД:', err.message);
   }
+
+  await deploySnapshot.send(captured);
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

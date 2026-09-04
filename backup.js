@@ -89,3 +89,92 @@ export function createWeeklyExport({
 
   return { runIfDue };
 }
+
+// Знімок стану, яким він був за мить до появи нової версії. Окремий префікс
+// обовʼязковий: добовий бекап зветься backup-YYYY-MM-DD.db і перезаписується
+// на кожному старті — саме так копія до міграції v3 загинула через три
+// секунди після завантаження нової версії.
+export const PREDEPLOY_PREFIX = 'predeploy-';
+
+// Telegram у telegram.js має власний таймаут 15 с. У шатдауні стільки чекати
+// не можна: Fly шле SIGKILL через kill_timeout (тут дефолтні 5 с), і на
+// половині очікування процес просто вбʼють.
+const SEND_BUDGET_MS = 3000;
+
+export function createDeploySnapshot({
+  store, dir, keep = 3, chatId, version, sendDocument, log,
+  now = () => Date.now(), sendTimeoutMs = SEND_BUDGET_MS,
+}) {
+  // Слот на версію, а не на час: машина рестартує по кілька разів на день, і
+  // при іменуванні за часом ротація викинула б саме той знімок, заради якого
+  // все й робиться. Без FLY_MACHINE_VERSION лишається час — кожен вихід стає
+  // окремою подією, і це чесніше, ніж вдавати, що версія відома.
+  const slot = version ?? new Date(now()).toISOString().slice(0, 19).replaceAll(':', '-') + 'Z';
+
+  async function withBudget(promise) {
+    let timer;
+    try {
+      await Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`не вклався в ${sendTimeoutMs} мс`)), sendTimeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Розділено надвоє свідомо. shutdown робить capture(), потім зводить WAL і
+  // закриває БД, і лише тоді send(): інакше чекпойнт — те, заради чого
+  // обробник сигналу існує, — чекав би на Telegram до трьох секунд.
+  function capture() {
+    const target = path.join(dir, `${PREDEPLOY_PREFIX}${slot}.db`);
+    // Читаємо ДО запису: наявний файл означає, що ця версія вже виходила,
+    // тобто це повторний рестарт, а не нова версія.
+    const seenBefore = fs.existsSync(target);
+
+    // Дамп збирається першим, поки БД точно відкрита: збій VACUUM не має
+    // забирати ще й позасмугову копію, яка цінніша за локальну.
+    let dump = null;
+    try {
+      dump = Buffer.from(JSON.stringify(store.exportAll(), null, 2));
+    } catch (err) {
+      log.error(`Знімок перед деплоєм, дамп не вдався: ${err.message}`);
+    }
+
+    try {
+      fs.rmSync(target, { force: true });
+      store.raw.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`);
+
+      // Те саме правило, що й у добовій ротації: щойно створену копію не
+      // видаляємо ніколи, скільки б файлів із пізнішими іменами не лежало.
+      const current = path.basename(target);
+      const others = fs.readdirSync(dir)
+        .filter(f => f.startsWith(PREDEPLOY_PREFIX) && f !== current)
+        .sort();
+      for (const stale of others.slice(0, Math.max(0, others.length - (keep - 1)))) {
+        fs.rmSync(path.join(dir, stale), { force: true });
+      }
+      log.info(`Знімок перед деплоєм: ${current}`);
+    } catch (err) {
+      log.error(`Знімок перед деплоєм не вдався: ${err.message}`);
+    }
+
+    return { dump, seenBefore };
+  }
+
+  async function send({ dump, seenBefore } = {}) {
+    if (seenBefore || !dump || chatId === null || chatId === undefined) return;
+
+    try {
+      await withBudget(sendDocument(chatId, dump, `deye-predeploy-${slot}.json`,
+        `💾 Копія перед зміною версії (${slot})`));
+      log.info(`Знімок перед деплоєм надіслано: deye-predeploy-${slot}.json`);
+    } catch (err) {
+      log.error(`Знімок перед деплоєм не надіслано: ${err.message}`);
+    }
+  }
+
+  return { capture, send, runOnce: async () => send(capture()) };
+}
