@@ -87,11 +87,18 @@ fly deploy ./collector --ha=false           # колектор
 - `/export` у Telegram — дамп файлом у чат адміна;
 - `GET /admin/export.json` — те саме з браузера.
 
+Відновлення й решта операцій — `docs/runbook.md`.
+
 ## Документація
 
-- `docs/deye-cloud-api.md` — розвідка Deye Cloud OpenAPI на живих запитах
-- `docs/grafana-alerting.md` — правила, шаблон повідомлень і пастки
-- `.claude/tasks/` — розбивка робіт і рішення з обґрунтуванням
+| Документ | Про що |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | стек, модулі, схема БД, HTTP і обмеження, з яких усе випливає |
+| [`docs/behaviour.md`](docs/behaviour.md) | життєвий цикл користувача, гейт доступу, алерти, поведінка в збоях |
+| [`docs/runbook.md`](docs/runbook.md) | деплой, секрети, бекап і відновлення, діагностика |
+| [`docs/deye-cloud-api.md`](docs/deye-cloud-api.md) | розвідка Deye Cloud OpenAPI на живих запитах |
+| [`docs/grafana-alerting.md`](docs/grafana-alerting.md) | правила, шаблон повідомлень і пастки |
+| `.claude/tasks/` | розбивка робіт і рішення з обґрунтуванням, включно з тим, що зламалось |
 
 ## Ліцензія
 
