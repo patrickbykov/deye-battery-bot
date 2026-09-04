@@ -1,15 +1,44 @@
 import fetch from 'node-fetch';
 import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, INFLUXDB_BUCKET, ADMIN_CHAT_ID, TG_API, PORT } from './config.js';
-import { answerCallbackQuery, sendMessage } from './telegram.js';
-import { commands } from './commands.js';
+import { answerCallbackQuery, sendMessage, sendPhoto } from './telegram.js';
+import { parseCommand, createCommands } from './commands.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
 import { createHttpServer } from './http-server.js';
 import { createDb, DEFAULT_DB_PATH } from './db.js';
 import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
-import { queryGrafana } from './grafana.js';
+import { queryGrafana, renderGrafanaPanel, getDashboardLink } from './grafana.js';
 
 const store = createDb(DEFAULT_DB_PATH);
+
+const commands = createCommands({
+  store,
+  telegram: { sendMessage, sendPhoto },
+  grafana: { queryGrafana, renderGrafanaPanel, getDashboardLink },
+  log: console,
+});
+
+// Адмінські команди — окрема мапа. Не-адміну вони відповідають так само, як
+// невідома команда: повідомлення «доступ заборонено» лише підтверджує, що
+// команда існує.
+const adminCommands = new Map([
+  ['/remove_inverter', async ({ chatId, arg }) => {
+    if (!arg || !store.getInverter(arg)) {
+      await sendMessage(chatId, `❌ Об’єкт <code>${arg ?? ''}</code> не знайдено.`);
+      return;
+    }
+    store.removeInverter(arg);
+    await sendMessage(chatId, `🗑 Об’єкт ${arg} видалено разом з підписками на нього.`);
+  }],
+  ['/users', async ({ chatId }) => {
+    const users = store.listUsersWithSubscriptions();
+    await sendMessage(chatId, users.length === 0
+      ? 'Користувачів ще немає.'
+      : users.map(u =>
+          `${u.username ? '@' + u.username : u.first_name ?? u.chat_id} — ${u.status}\n` +
+          `  ${u.inverters.map(i => i.id).join(', ') || '—'}`).join('\n'));
+  }],
+]);
 
 let lastUpdateId = 0;
 let lastPollSuccessAt = null;
@@ -44,14 +73,21 @@ async function processUpdate(update) {
   const msg = update.message;
   if (!msg?.text) return;
 
-  const text = msg.text.trim().toLowerCase();
-  const handler = commands[text];
+  const parsed = parseCommand(msg.text);
+  if (!parsed) return;
+
+  const isAdmin = ADMIN_CHAT_ID !== null && msg.from?.id === ADMIN_CHAT_ID;
+  const handler = (isAdmin ? adminCommands.get(parsed.cmd) : undefined)
+                ?? commands.get(parsed.cmd);
 
   // Логуємо лише розпізнану команду й chat id. Текст повідомлень і імена
   // користувачів у логи Fly не пишемо — почистити їх потім не можна.
-  console.log(`Command ${handler ? text : '(unknown)'} from chat ${msg.chat.id}`);
+  console.log(`Command ${typeof handler === 'function' ? parsed.cmd : '(unknown)'} from chat ${msg.chat.id}`);
 
-  if (handler) await handler(msg.chat.id);
+  // typeof на випадок ключів на кшталт __proto__ чи constructor: текст
+  // повідомлення приходить від будь-кого.
+  if (typeof handler !== 'function') return;
+  await handler({ chatId: msg.chat.id, messageId: msg.message_id, from: msg.from, arg: parsed.arg });
 }
 
 async function pollUpdates() {
@@ -81,7 +117,13 @@ async function pollUpdates() {
 
     for (const update of data.result) {
       lastUpdateId = update.update_id;
-      await processUpdate(update);
+      // Кожен апдейт в окремому try: виняток на одному не має забирати
+      // решту батча.
+      try {
+        await processUpdate(update);
+      } catch (err) {
+        console.error(`Update ${update.update_id}: ${redact(err.message)}`);
+      }
     }
   } catch (err) {
     console.error('Poll error:', redact(err.message));
@@ -144,8 +186,12 @@ async function main() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         commands: [
-          { command: 'status', description: '🔋 Поточний стан батареї' },
-          { command: 'graph', description: '📊 Графік SOC за 24 години' },
+          { command: 'list', description: '📋 Доступні об’єкти' },
+          { command: 'subscribe', description: '➕ Підписатись на об’єкт' },
+          { command: 'unsubscribe', description: '➖ Відписатись' },
+          { command: 'mysubs', description: '📌 Мої підписки' },
+          { command: 'status', description: '🔋 Поточний стан' },
+          { command: 'graph', description: '📊 Графік за 24 години' },
           { command: 'help', description: 'ℹ️ Список команд' }
         ]
       })
