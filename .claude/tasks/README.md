@@ -83,7 +83,7 @@
 | # | Задача | Статус |
 |---|---|---|
 | 08 | [Дашборд під кілька інверторів](08-grafana-dashboard-inverter-var.md) | ☐ |
-| 09 | [`discovery.js`](09-discovery.md) | ☐ |
+| 09 | [`discovery.js`](09-discovery.md) | ☑ |
 | 10 | [Переписати `commands.js`](10-commands-multi.md) | ☐ |
 | 11 | [Переписати `index.js`](11-index-routing.md) | ☐ |
 | 12 | [Алерт по кожному інвертору](12-grafana-alert-multi.md) | ☐ |
