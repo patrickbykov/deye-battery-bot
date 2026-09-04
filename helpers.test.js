@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -42,4 +42,26 @@ test('escapeHtml знешкоджує кутові дужки й амперса�
     '&lt;script&gt;alert(1)&lt;/script&gt;');
   assert.equal(escapeHtml('A & B'), 'A &amp; B');
   assert.equal(escapeHtml(null), '');
+});
+
+test('batteryState: мінус — заряд, плюс — розряд', () => {
+  // Підтверджено вимірами 4 вер 2026: при незмінному SOC напруга на клемах
+  // на 0.51 V вища на ділянках з відʼємною потужністю. Це падіння на
+  // внутрішньому опорі при струмі, що тече В батарею. Початкове припущення
+  // задачі 03 було оберненим.
+  assert.equal(batteryState(-405), 'заряджається');
+  assert.equal(batteryState(96), 'розряджається');
+});
+
+test('batteryState: близьке до нуля — не рух, а плавання', () => {
+  // BMS постійно тримає малий трикл; називати ±3 Вт зарядом чи розрядом
+  // означало б блимати підписом щоп'ять хвилин.
+  assert.equal(batteryState(0), 'у спокої');
+  assert.equal(batteryState(4), 'у спокої');
+  assert.equal(batteryState(-4), 'у спокої');
+});
+
+test('batteryState: без значення — нічого не вигадуємо', () => {
+  assert.equal(batteryState(null), null);
+  assert.equal(batteryState('abc'), null);
 });

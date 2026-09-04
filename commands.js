@@ -1,4 +1,4 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState } from './helpers.js';
 import { buildKeyboard, readChecked } from './subs-keyboard.js';
 import { INFLUXDB_BUCKET } from './config.js';
 
@@ -89,7 +89,7 @@ export function createCommands({ store, telegram, grafana, log, sleep = defaultS
 
 ⚡ Напруга: <b>${fmt(f.voltage)} V</b>
 ⚡ Струм: <b>${fmt(f.current)} A</b>
-⚡ Потужність: <b>${fmt(f.power)} W</b>
+⚡ Потужність: <b>${fmt(f.power)} W</b>${batteryState(f.power) ? ` — ${batteryState(f.power)}` : ''}
 🌡️ Температура: <b>${fmt(f.temperature)} °C</b>
 
 🟢 Оновлено: ${formatKyivTime(f['_time'] ?? f.Time)}

@@ -49,3 +49,18 @@ export function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
+
+// Знак BatteryPower у Deye обернений до інтуїції: відʼємне значення означає
+// ЗАРЯД. Підтверджено трьома незалежними спостереженнями 3-4 вер 2026:
+// балансом потужностей (мережа 742 Вт при навантаженні 239 Вт і батареї
+// -405 Вт сходиться лише як заряд), стрибком напруги 54.2 → 56.2 V за шість
+// хвилин при -400 Вт, і статистикою за 20 годин — напруга на клемах на
+// 0.51 V вища на ділянках з відʼємною потужністю при незмінному SOC.
+const IDLE_WATTS = 5;
+
+export function batteryState(power) {
+  const watts = Number(power);
+  if (power === null || power === undefined || !Number.isFinite(watts)) return null;
+  if (Math.abs(watts) < IDLE_WATTS) return 'у спокої';
+  return watts < 0 ? 'заряджається' : 'розряджається';
+}

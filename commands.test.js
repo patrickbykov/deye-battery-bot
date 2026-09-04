@@ -361,3 +361,30 @@ test('видалення себе прибирає користувача й п�
   assert.equal(store.getUser(7), undefined);
   assert.equal(store.raw.prepare('SELECT count(*) n FROM subscriptions').get().n, 0);
 });
+
+test('/status пояснює знак потужності словами', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+
+  const sent = [];
+  const commands = createCommands({
+    store,
+    telegram: { sendMessage: async (c, t) => sent.push(t), sendPhoto: async () => {} },
+    grafana: {
+      queryGrafana: async () => ({ results: { A: { frames: [{
+        schema: { fields: [{ name: '_time' }, { name: 'soc' }, { name: 'power' }] },
+        data: { values: [[1788455061000], [98], [-405]] },
+      }] } } }),
+      renderGrafanaPanel: async () => Buffer.from(''), getDashboardLink: () => 'https://g',
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /-405/);
+  assert.match(sent[0], /заряджається/, 'відʼємна потужність — це заряд');
+});
