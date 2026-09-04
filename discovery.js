@@ -32,6 +32,9 @@ schema.tagValues(bucket: "${bucket}", tag: "inverter")`;
       // Зникнення тега НЕ видаляє інвертор: retention бакета 30 днів, а
       // ON DELETE CASCADE знесло б разом з ним усі підписки на нього.
       if (store.getInverter(id)) continue;
+      // Видалений адміном — не повертаємо. Тег живе в InfluxDB до кінця
+      // retention, тож інакше /remove_inverter скасовувався б за 5 хвилин.
+      if (store.isIgnoredInverter(id)) continue;
 
       store.upsertInverter(id, id, dashboardUid);
       log.info(`discovery: новий інвертор ${id}`);

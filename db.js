@@ -8,7 +8,7 @@ export const DEFAULT_DB_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)), 'data', 'bot.db'
 );
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // strftime з явним 'Z', а не datetime('now'). Останній віддає
 // '2026-09-03 12:00:00' — без зони й без 'T', і new Date() читає такий рядок
@@ -57,6 +57,16 @@ const SCHEMA_V1 = `
   CREATE INDEX IF NOT EXISTS idx_users_status  ON users(status);
 `;
 
+// Надгробки. Без них discovery повертає видалений інвертор наступним циклом:
+// тег живе в InfluxDB до кінця retention (30 днів), тож адмінське видалення
+// мовчки скасовувалось за 5 хвилин.
+const SCHEMA_V2 = `
+  CREATE TABLE IF NOT EXISTS ignored_inverters (
+    id         TEXT PRIMARY KEY,
+    ignored_at TEXT NOT NULL DEFAULT (${NOW})
+  );
+`;
+
 export function migrate(db) {
   const current = db.pragma('user_version', { simple: true });
   if (current === SCHEMA_VERSION) return;
@@ -68,6 +78,7 @@ export function migrate(db) {
       db.exec('DROP TABLE IF EXISTS alert_state');
       db.exec(SCHEMA_V1);
     }
+    if (current <= 1) db.exec(SCHEMA_V2);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -95,11 +106,20 @@ export function createDb(filename) {
     upsertInverter: (id, name = null, dashboardUid = null, panelId = 6) =>
       db.prepare(`
         INSERT INTO inverters (id, name, dashboard_uid, panel_id)
-        VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING
-      `).run(id, name ?? id, dashboardUid, panelId),
+        SELECT ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM ignored_inverters WHERE id = ?)
+        ON CONFLICT(id) DO NOTHING
+      `).run(id, name ?? id, dashboardUid, panelId, id),
 
-    removeInverter: id =>
-      db.prepare('DELETE FROM inverters WHERE id = ?').run(id),
+    isIgnoredInverter: id =>
+      !!db.prepare('SELECT 1 FROM ignored_inverters WHERE id = ?').get(id),
+
+    // Видалення лишає надгробок, інакше discovery поверне об'єкт наступним
+    // циклом, поки тег ще живий у InfluxDB.
+    removeInverter: id => db.transaction(() => {
+      db.prepare('DELETE FROM inverters WHERE id = ?').run(id);
+      db.prepare('INSERT OR IGNORE INTO ignored_inverters (id) VALUES (?)').run(id);
+    })(),
 
     // --- Users ---
     // Нік оновлюємо при кожному контакті: у Telegram його міняють, і застарілий

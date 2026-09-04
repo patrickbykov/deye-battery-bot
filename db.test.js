@@ -9,7 +9,7 @@ const tables = db => db.prepare(
 
 test('створює схему на порожній БД і ставить версію', () => {
   const store = createDb(':memory:');
-  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'inverters', 'subscriptions', 'users']);
+  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'ignored_inverters', 'inverters', 'subscriptions', 'users']);
   assert.equal(store.raw.pragma('user_version', { simple: true }), SCHEMA_VERSION);
 });
 
@@ -110,4 +110,20 @@ test('список для адмінки віддає нік і обрані о�
   assert.equal(rows[0].username, 'petro');
   assert.deepEqual(rows[0].inverters.map(i => i.id), ['INV1', 'INV2']);
   assert.deepEqual(rows[1].inverters, [], 'користувач без підписок не зникає зі списку');
+});
+
+test('видалений інвертор не повертається discovery', () => {
+  // Спіймано в проді: /remove_inverter test спрацював, а через 5 хвилин
+  // discovery додав його знову — тег ще живий у InfluxDB до кінця retention.
+  const store = seeded();
+  store.removeInverter('INV1');
+  assert.ok(store.isIgnoredInverter('INV1'));
+  assert.ok(!store.isIgnoredInverter('INV2'));
+});
+
+test('повторне виявлення проігнорованого не створює рядка', () => {
+  const store = seeded();
+  store.removeInverter('INV1');
+  store.upsertInverter('INV1', 'Перший');
+  assert.deepEqual(store.getAllInverters().map(i => i.id), ['INV2']);
 });

@@ -67,3 +67,13 @@ test('помилка запиту не вилітає з циклу', async () =
   await discovery.runOnce();
   assert.deepEqual(store.getAllInverters().map(i => i.id), ['INV1'], 'наступна ітерація працює');
 });
+
+test('не повертає інвертор, який адмін видалив', async () => {
+  const { store, discovery, notified } = harness([frames(['INV1']), frames(['INV1'])]);
+  await discovery.runOnce();
+  store.removeInverter('INV1');
+  await discovery.runOnce();
+
+  assert.deepEqual(store.getAllInverters(), []);
+  assert.equal(notified.length, 1, 'і не повідомляє про нього повторно');
+});
