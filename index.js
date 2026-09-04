@@ -1,10 +1,10 @@
 import fetch from 'node-fetch';
-import http from 'http';
 import { TG_TOKEN, TG_CHAT_ID, GRAFANA_URL, GRAFANA_SA_TOKEN, GRAFANA_DS_UID, DASHBOARD_UID, DEFAULT_INVERTER_ID, TG_API, PORT } from './config.js';
 import { answerCallbackQuery } from './telegram.js';
 import { commands } from './commands.js';
 import { healthStatus } from './health.js';
 import { redact } from './helpers.js';
+import { createHttpServer } from './http-server.js';
 
 let lastUpdateId = 0;
 let lastPollSuccessAt = null;
@@ -85,17 +85,27 @@ async function pollUpdates() {
   }
 }
 
-// --- Health check ---
+// --- HTTP ---
 
-http.createServer((req, res) => {
-  const { healthy, ageMs } = healthStatus(lastPollSuccessAt, STALENESS_LIMIT_MS, Date.now());
+// Поки що єдиний маршрут. Далі сюди стануть вебхук Grafana (задача 19) і
+// адмінка (22-23); health лишається поза таблицею й обробляється першим.
+const routes = [
+  {
+    method: 'GET',
+    path: '/robots.txt',
+    handler: async (req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('User-agent: *\nDisallow: /\n');
+    },
+  },
+];
 
-  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'text/plain' });
-  res.end(healthy
-    ? `OK (останній полінг ${Math.round(ageMs / 1000)}с тому)`
-    : `STALE (${ageMs === null ? 'полінгу ще не було' : Math.round(ageMs / 1000) + 'с без відповіді Telegram'})`);
+createHttpServer({
+  getHealth: () => healthStatus(lastPollSuccessAt, STALENESS_LIMIT_MS, Date.now()),
+  routes,
+  log: console,
 }).listen(PORT, '0.0.0.0', () => {
-  console.log(`Health check server listening on port ${PORT}`);
+  console.log(`HTTP на порту ${PORT}`);
 });
 
 // --- Main ---
