@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readBody } from './http-server.js';
-import { normalizeUsername, decisionMessage } from './helpers.js';
-import { loginPage, usersPage, objectsPage } from './admin-views.js';
+import { normalizeUsername, decisionMessage, objectRemoved } from './helpers.js';
+import { loginPage, usersPage, objectsPage, confirmRemovalPage } from './admin-views.js';
 import {
   verifyPassword, deriveKeys, signSession, verifySession, csrfToken, csrfValid, throttleDecision,
 } from './admin-auth.js';
@@ -126,6 +126,43 @@ export function createAdminRoutes({
         if (wanted !== inverter.name) {
           store.renameInverter(inverter.id, wanted);
           log.info(`Адмінка: обʼєкт ${inverter.id} → «${wanted}»`);
+        }
+      }
+      redirect(res, '/admin/objects');
+    }) },
+
+    { method: 'POST', path: '/admin/objects/delete', handler: guard(async (req, res, { session: s }) => {
+      const form = await readForm(req);
+      if (!csrfValid(s.sid, form.get('csrf'), keys.csrf)) {
+        return html(res, 403, '<p>Недійсний токен форми. Оновіть сторінку.</p>');
+      }
+
+      const inverter = store.getInverter(form.get('id'));
+      if (!inverter) return html(res, 404, '<p>Обʼєкт не знайдено. Можливо, його вже видалили.</p>');
+
+      // Два стани на одному маршруті. Окремий GET дав би id обʼєкта в URL,
+      // тобто в логах Fly і в історії браузера; окрема сторінка без POST
+      // не мала б звідки взяти CSRF-перевірку.
+      if (form.get('confirm') !== '1') {
+        return html(res, 200, confirmRemovalPage({
+          inverter,
+          subscribers: store.getSubscriberChatIds(inverter.id).length,
+          csrf: csrfToken(s.sid, keys.csrf),
+        }));
+      }
+
+      // Адресатів повертає сама транзакція: після каскаду їх уже не дізнатись.
+      const affected = store.removeInverter(inverter.id);
+      log.info(`Адмінка: обʼєкт ${inverter.id} видалено, зачеплено ${affected.length}`);
+
+      // Видалення вже в БД. Недоставлене повідомлення не привід його
+      // відкочувати — це зробило б стан гіршим, а не кращим.
+      const text = objectRemoved(inverter.name ?? inverter.id);
+      for (const chatId of affected) {
+        try {
+          await notifyUser(chatId, text);
+        } catch (err) {
+          log.error(`Адмінка: не вдалось сповістити chat:${chatId}: ${err.message}`);
         }
       }
       redirect(res, '/admin/objects');

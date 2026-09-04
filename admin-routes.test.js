@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { createAdminRoutes } from './admin-routes.js';
 import { createDb } from './db.js';
 import { deriveKeys, signSession, csrfToken } from './admin-auth.js';
-import { decisionMessage } from './helpers.js';
+import { decisionMessage, objectRemoved } from './helpers.js';
 
 // Хеш не перевіряється в цих тестах — з нього лише виводяться ключі сесії
 // й CSRF, тож будь-який стабільний рядок годиться.
@@ -181,4 +181,97 @@ test('видаленому користувачу нічого не шлють',
   await h.post('/admin/users', { csrf: h.csrf, known: '42', approve: '42' });
 
   assert.deepEqual(h.notified, []);
+});
+
+// --- Видалення обʼєкта ---
+
+function withInverter(h) {
+  h.store.upsertInverter('INV1', 'Клочківська 117');
+  h.store.upsertInverter('INV2', 'Сумська 4');
+  h.store.upsertUser(7, 'petro', 'Петро');
+  h.store.replaceSubscriptions(7, ['INV1']);
+  return h;
+}
+
+test('перший POST лише показує підтвердження і нічого не видаляє', async () => {
+  // Кнопка в рядку не має бути мінним полем: один промах миші не мусить
+  // знести обʼєкт разом із чужими підписками.
+  const h = withInverter(harness());
+  const res = await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1' });
+
+  assert.equal(res.statusCode, 200);
+  assert.match(res.body, /Клочківська 117/);
+  assert.ok(h.store.getInverter('INV1'), 'обʼєкт на місці');
+  assert.deepEqual(h.notified, []);
+});
+
+test('сторінка підтвердження називає, скількох це зачепить', async () => {
+  const h = withInverter(harness());
+  const res = await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1' });
+  assert.match(res.body, /1/);
+});
+
+test('підтверджений POST видаляє обʼєкт', async () => {
+  const h = withInverter(harness());
+  const res = await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1', confirm: '1' });
+
+  assert.equal(res.statusCode, 303);
+  assert.equal(h.store.getInverter('INV1'), undefined);
+  assert.ok(h.store.getInverter('INV2'), 'сусіда не зачепило');
+});
+
+test('видалення лишає надгробок — discovery не поверне обʼєкт', async () => {
+  const h = withInverter(harness());
+  await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1', confirm: '1' });
+  assert.ok(h.store.isIgnoredInverter('INV1'));
+});
+
+test('підписники дізнаються, що обʼєкт більше не відстежується', async () => {
+  const h = withInverter(harness());
+  await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1', confirm: '1' });
+
+  assert.equal(h.notified.length, 1);
+  assert.equal(h.notified[0].chatId, 7);
+  assert.equal(h.notified[0].text, objectRemoved('Клочківська 117'));
+});
+
+test('збій сповіщення не скасовує видалення — воно вже в БД', async () => {
+  const h = withInverter(harness({ notifyFails: true }));
+  const res = await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'INV1', confirm: '1' });
+
+  assert.equal(res.statusCode, 303);
+  assert.equal(h.store.getInverter('INV1'), undefined);
+  assert.equal(h.errors.length, 1);
+});
+
+test('невідомий обʼєкт не малює підтвердження ні для чого', async () => {
+  const h = withInverter(harness());
+  const res = await h.post('/admin/objects/delete', { csrf: h.csrf, id: 'НЕМАЄ' });
+  assert.equal(res.statusCode, 404);
+});
+
+test('видалення без CSRF-токена не відбувається', async () => {
+  const h = withInverter(harness());
+  const res = await h.post('/admin/objects/delete',
+    { csrf: 'підроблений', id: 'INV1', confirm: '1' });
+
+  assert.equal(res.statusCode, 403);
+  assert.ok(h.store.getInverter('INV1'), 'обʼєкт на місці');
+});
+
+test('без сесії маршрут видалення веде на форму входу', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Клочківська 117');
+  const routes = createAdminRoutes({
+    store, passwordHash: HASH, log: { info() {}, warn() {}, error() {} },
+  });
+  const req = Object.assign(Readable.from([]), {
+    method: 'POST', url: '/admin/objects/delete', headers: {},
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  const res = { writeHead(s, h) { this.statusCode = s; this.headers = h; }, end() {} };
+
+  await routes.find(r => r.path === '/admin/objects/delete').handler(req, res, {});
+  assert.equal(res.statusCode, 303);
+  assert.ok(store.getInverter('INV1'));
 });

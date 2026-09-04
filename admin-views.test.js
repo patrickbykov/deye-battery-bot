@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginPage, usersPage, objectsPage } from './admin-views.js';
+import { loginPage, usersPage, objectsPage, confirmRemovalPage } from './admin-views.js';
 
 const users = [{
   chat_id: 42, username: 'petro', first_name: '<img src=x onerror=alert(1)>',
@@ -166,4 +166,66 @@ test('без запрошень секція пояснює, навіщо вон
 
 test('сторінка користувачів лишається без JavaScript із секцією запрошень', () => {
   assert.doesNotMatch(usersPage({ users, invited, csrf: 'tok' }), /<script/i);
+});
+
+// --- Видалення обʼєкта ---
+
+test('кожен обʼєкт має кнопку видалення', () => {
+  const html = objectsPage({ inverters, csrf: 'tok' });
+  assert.match(html, /formaction="\/admin\/objects\/delete"/);
+  assert.match(html, /name="id" value="2512151417"/);
+});
+
+test('кнопка видалення живе в тій самій формі — CSRF уже там', () => {
+  // Нуль JS: formaction відправляє ту саму форму на інший маршрут, тож
+  // окремої форми з власним токеном не потрібно.
+  const html = objectsPage({ inverters, csrf: 'tok-9' });
+  assert.equal((html.match(/<form/g) ?? []).length, 2, 'логаут і форма обʼєктів');
+});
+
+test('сторінка підтвердження називає обʼєкт, а не лише серійник', () => {
+  const html = confirmRemovalPage({
+    inverter: { id: '2512151417', name: 'Клочківська 117' }, subscribers: 3, csrf: 'tok',
+  });
+  assert.match(html, /Клочківська 117/);
+  assert.match(html, /2512151417/);
+});
+
+test('сторінка підтвердження називає ставку — скількох це зачепить', () => {
+  // Рішення ухвалюють, знаючи ціну: три людини перестануть отримувати
+  // попередження про розряд.
+  const html = confirmRemovalPage({
+    inverter: { id: 'X', name: 'X' }, subscribers: 3, csrf: 'tok',
+  });
+  assert.match(html, /3/);
+  assert.match(html, /підписан|людин/i);
+});
+
+test('сторінка підтвердження попереджає, що це в один бік', () => {
+  const html = confirmRemovalPage({ inverter: { id: 'X', name: 'X' }, subscribers: 0, csrf: 'tok' });
+  assert.match(html, /не поверн|неможлив|назавжди/i);
+});
+
+test('підтвердження несе CSRF і прапорець confirm', () => {
+  const html = confirmRemovalPage({ inverter: { id: 'X', name: 'X' }, subscribers: 0, csrf: 'tok-7' });
+  assert.match(html, /name="csrf" value="tok-7"/);
+  assert.match(html, /name="confirm" value="1"/);
+});
+
+test('зі сторінки підтвердження можна піти, нічого не зробивши', () => {
+  const html = confirmRemovalPage({ inverter: { id: 'X', name: 'X' }, subscribers: 0, csrf: 'tok' });
+  assert.match(html, /href="\/admin\/objects"/);
+});
+
+test('назва обʼєкта на сторінці підтвердження екранується', () => {
+  const html = confirmRemovalPage({
+    inverter: { id: 'X', name: '"><script>alert(1)</script>' }, subscribers: 0, csrf: 'tok',
+  });
+  assert.doesNotMatch(html, /<script/i);
+  assert.match(html, /&quot;&gt;&lt;script&gt;/);
+});
+
+test('сторінка підтвердження без нуля підписників не бреше про людей', () => {
+  const html = confirmRemovalPage({ inverter: { id: 'X', name: 'X' }, subscribers: 0, csrf: 'tok' });
+  assert.doesNotMatch(html, /0 людей|0 підписан/);
 });

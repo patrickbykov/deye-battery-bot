@@ -241,3 +241,32 @@ test('дамп для бекапу містить запрошення', () => {
   store.addInvited('volunteer', 'Клочківська');
   assert.deepEqual(store.exportAll().invited.map(r => r.username), ['volunteer']);
 });
+
+test('видалення повертає всіх, хто був підписаний — щоб було кому написати', () => {
+  // Після каскаду адресатів уже не дізнатись, тож збирає їх сама транзакція:
+  // якби кожен викликач робив це сам, рано чи пізно хтось зробив би це
+  // ПІСЛЯ DELETE і розсилка мовчки спорожніла б.
+  const store = seeded();
+  for (const id of [7, 8]) store.upsertUser(id, `u${id}`, `U${id}`);
+  store.replaceSubscriptions(7, ['INV1']);
+  store.replaceSubscriptions(8, ['INV1', 'INV2']);
+  store.setUserStatus(8, 'approved', 'test');
+
+  assert.deepEqual(store.removeInverter('INV1').sort(), [7, 8]);
+});
+
+test('видалення повертає порожньо, коли на обʼєкт ніхто не підписаний', () => {
+  const store = seeded();
+  assert.deepEqual(store.removeInverter('INV1'), []);
+});
+
+test('перелік підписників не фільтрує за статусом — на відміну від розсилки', () => {
+  // getSubscribers свідомо віддає лише схвалених: це єдине місце, де
+  // вирішується «кому слати алерт». Видалення ж зачіпає всіх.
+  const store = seeded();
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);   // лишається pending
+
+  assert.deepEqual(store.getSubscriberChatIds('INV1'), [7]);
+  assert.deepEqual(store.getSubscribers('INV1'), [], 'розсилка його не бачить');
+});

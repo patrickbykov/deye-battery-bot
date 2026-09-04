@@ -88,7 +88,7 @@
 | `http-router.js` | `matchRoute` — чиста функція; 404 проти 405; `.`/`..` відхиляються |
 | `http-server.js` | сервер, `readBody` з лімітом, заголовки безпеки |
 | `admin-auth.js` | scrypt, підпис сесії, CSRF, тротлінг — усе чисте |
-| `admin-views.js` | SSR-HTML: `loginPage`, `usersPage`, `objectsPage` |
+| `admin-views.js` | SSR-HTML: `loginPage`, `usersPage`, `objectsPage`, `confirmRemovalPage` |
 | `admin-routes.js` | маршрути адмінки (I/O); рішення про доступ шле людині в Telegram |
 | `webhook-grafana.js` | `webhookAuthorized`, `parseGrafanaWebhook`, `dedupKey` |
 | `alerts-fanout.js` | `selectRecipients`, `formatAlert` — кому слати і який текст |
@@ -175,7 +175,7 @@ invited(username PK, note, invited_at)                                  -- за�
 | GET | `/admin` | — форма логіну |
 | POST | `/admin/login` | тротлінг |
 | GET | `/admin/users`, `/admin/objects` | сесійна cookie |
-| POST | `/admin/users`, `/admin/inverters`, `/admin/invites`, `/admin/logout` | cookie + CSRF |
+| POST | `/admin/users`, `/admin/inverters`, `/admin/invites`, `/admin/objects/delete`, `/admin/logout` | cookie + CSRF |
 | GET | `/admin/export.json` | cookie |
 | — | решта | 404; відомий шлях з іншим методом → 405 |
 

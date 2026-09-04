@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage, objectRemoved } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -142,4 +142,10 @@ test('текст той самий незалежно від того, звід�
 test('рішення без зміни статусу не має тексту — писати нема про що', () => {
   assert.equal(decisionMessage('approved', 'approved'), null);
   assert.equal(decisionMessage('rejected', 'rejected'), null);
+});
+
+test('видалення обʼєкта пояснює людині, що сталось із підпискою', () => {
+  const text = objectRemoved('Клочківська 117');
+  assert.match(text, /Клочківська 117/);
+  assert.match(text, /підписк/i);
 });

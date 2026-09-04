@@ -10,7 +10,7 @@ import { createBackup, createWeeklyExport, createDeploySnapshot, BACKUP_INTERVAL
 import { throttleDecision } from './admin-auth.js';
 import path from 'node:path';
 import { healthStatus } from './health.js';
-import { redact } from './helpers.js';
+import { redact, escapeHtml, objectRemoved } from './helpers.js';
 import { createHttpServer, readBody } from './http-server.js';
 import { createDb, DEFAULT_DB_PATH } from './db.js';
 import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
@@ -54,12 +54,21 @@ const alertQueue = createAlertQueue({
 // команда існує.
 const adminCommands = new Map([
   ['/remove_inverter', async ({ chatId, arg }) => {
-    if (!arg || !store.getInverter(arg)) {
-      await sendMessage(chatId, `❌ Об’єкт <code>${arg ?? ''}</code> не знайдено.`);
+    const inverter = arg ? store.getInverter(arg) : null;
+    if (!inverter) {
+      // Екрануємо навіть адмінський ввід: parse_mode HTML відхилив би все
+      // повідомлення з 400, якби в аргументі трапилась кутова дужка.
+      await sendMessage(chatId, `❌ Об’єкт <code>${escapeHtml(arg ?? '')}</code> не знайдено.`);
       return;
     }
-    store.removeInverter(arg);
-    await sendMessage(chatId, `🗑 Об’єкт ${arg} видалено разом з підписками на нього.`);
+    // Той самий текст, що й у кнопки в адмінці: два шляхи до однієї дії не
+    // мають пояснювати її по-різному.
+    const name = inverter.name ?? inverter.id;
+    const affected = store.removeInverter(inverter.id);
+    for (const target of affected) await sendMessage(target, objectRemoved(name));
+    await sendMessage(chatId,
+      `🗑 Об’єкт ${escapeHtml(name)} видалено разом з підписками на нього.` +
+      (affected.length > 0 ? `\nПовідомлено підписників: ${affected.length}.` : ''));
   }],
   ['/export', async ({ chatId }) => {
     // Telegram як позасмугове сховище бекапів: волюм прив'язаний до одного

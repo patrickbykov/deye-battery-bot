@@ -115,6 +115,20 @@ const CSS = `
   .obj .note{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;
     color:var(--ink-2);font-size:.875rem}
   .obj.new{gap:.6rem;flex-wrap:wrap}
+
+  /* Небезпечна дія виглядає небезпечно, але не кричить: у рядку вона
+     другорядна, а вагу набирає вже на сторінці підтвердження. */
+  .danger{flex:0 0 auto;background:transparent;color:var(--wait);
+    border-color:var(--rule);padding:.4rem .7rem;font-size:.85rem;font-weight:500}
+  .danger:hover{border-color:var(--wait)}
+  .stake{border:1px solid var(--rule);border-left:3px solid var(--wait);
+    border-radius:8px;background:var(--panel);padding:1rem 1.1rem;margin:0 0 1.25rem}
+  .stake p{margin:0 0 .5rem}
+  .stake p:last-child{margin:0}
+  .stake strong{color:var(--wait)}
+  .confirm button{background:var(--wait);border-color:var(--wait);color:#1b1300}
+  .confirm a{color:var(--ink-2);text-decoration:none;padding:.65rem 0}
+  .confirm a:hover{color:var(--ink)}
   .obj.new input[type=text]{flex:1 1 9rem}
 
   .login{max-width:22rem;margin:12vh auto 0}
@@ -212,6 +226,11 @@ export function objectsPage({ inverters, csrf, waiting = 0 }) {
            <span class="id">${esc(inv.id)}</span>
            <input type="text" name="name:${esc(inv.id)}" value="${esc(inv.name ?? inv.id)}"
                   aria-label="Назва обʼєкта ${esc(inv.id)}" maxlength="60">
+           ${/* formaction шле ТУ САМУ форму на інший маршрут: нуль JS, і
+                CSRF-токен уже лежить поруч. Окрема форма на рядок дала б
+                вкладені форми, яких HTML не допускає. */ ''}
+           <button class="danger" type="submit" formaction="/admin/objects/delete"
+                   name="id" value="${esc(inv.id)}">Видалити</button>
          </li>`).join('')}</ul>
          <div class="actions"><button type="submit">Зберегти назви</button></div>
        </form>`;
@@ -321,4 +340,36 @@ export function usersPage({ users, invited = [], csrf, inviteError }) {
     </form>
     ${invites}
 `);
+}
+
+// Окрема сторінка, бо confirm() немає: нуль JS — свідоме обмеження адмінки.
+// Її робота — назвати ставку до того, як дію зроблено, а не після.
+export function confirmRemovalPage({ inverter, subscribers = 0, csrf }) {
+  const name = esc(inverter.name ?? inverter.id);
+  const people = subscribers > 0
+    ? `<p>На обʼєкт <strong>${subscribers}</strong>
+         ${plural(subscribers, 'підписаний', 'підписані', 'підписаних')}
+         ${plural(subscribers, 'людина', 'людини', 'людей')} — підписки зникнуть,
+         і вони отримають повідомлення.</p>`
+    : '<p>На обʼєкт ніхто не підписаний.</p>';
+
+  return page('Видалити обʼєкт', `
+    ${nav('/admin/objects', csrf)}
+    <header><h1>Видалити «${name}»?</h1></header>
+    <div class="stake">
+      <p class="id">${esc(inverter.id)}</p>
+      ${people}
+      <p>Обʼєкт не повернеться сам: discovery його більше не підхопить, навіть
+         поки тег ще живий в InfluxDB. Скасувати видалення через адмінку буде
+         неможливо.</p>
+    </div>
+    <form method="post" action="/admin/objects/delete" class="confirm">
+      <input type="hidden" name="csrf" value="${esc(csrf)}">
+      <input type="hidden" name="id" value="${esc(inverter.id)}">
+      <input type="hidden" name="confirm" value="1">
+      <div class="actions">
+        <button type="submit">Видалити назавжди</button>
+        <a href="/admin/objects">Скасувати</a>
+      </div>
+    </form>`);
 }

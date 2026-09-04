@@ -135,11 +135,27 @@ export function createDb(filename) {
     isIgnoredInverter: id =>
       !!db.prepare('SELECT 1 FROM ignored_inverters WHERE id = ?').get(id),
 
+    // Усі, хто підписаний, незалежно від статусу. Свідомо окремо від
+    // getSubscribers: той віддає лише схвалених, бо він — єдине місце, де
+    // вирішується «кому слати алерт». Видалення ж обʼєкта зачіпає й тих,
+    // чия заявка ще на розгляді.
+    getSubscriberChatIds: inverterId =>
+      db.prepare('SELECT chat_id FROM subscriptions WHERE inverter_id = ? ORDER BY chat_id')
+        .all(inverterId).map(r => r.chat_id),
+
     // Видалення лишає надгробок, інакше discovery поверне об'єкт наступним
     // циклом, поки тег ще живий у InfluxDB.
+    //
+    // Повертає тих, хто був підписаний: після каскаду їх уже не дізнатись.
+    // Збирає їх сама транзакція, щоб порядок не можна було переплутати —
+    // якби кожен викликач робив це сам, рано чи пізно хтось зробив би це
+    // після DELETE і розсилка мовчки спорожніла б.
     removeInverter: id => db.transaction(() => {
+      const affected = db.prepare('SELECT chat_id FROM subscriptions WHERE inverter_id = ?')
+        .all(id).map(r => r.chat_id);
       db.prepare('DELETE FROM inverters WHERE id = ?').run(id);
       db.prepare('INSERT OR IGNORE INTO ignored_inverters (id) VALUES (?)').run(id);
+      return affected;
     })(),
 
     // --- Запрошення ---
