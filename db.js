@@ -1,86 +1,178 @@
 import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, 'data', 'bot.db');
+// Шлях, а не готовий конект: конект на рівні модуля створював би файл БД
+// під час запуску тестів. Відкриває його той, хто його й закриває.
+export const DEFAULT_DB_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), 'data', 'bot.db'
+);
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+export const SCHEMA_VERSION = 1;
 
-db.exec(`
+// strftime з явним 'Z', а не datetime('now'). Останній віддає
+// '2026-09-03 12:00:00' — без зони й без 'T', і new Date() читає такий рядок
+// як ЛОКАЛЬНИЙ час. У адмінці це давало б зсув на кілька годин.
+const NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+
+const SCHEMA_V1 = `
   CREATE TABLE IF NOT EXISTS inverters (
-    id TEXT PRIMARY KEY,
-    name TEXT,
+    id            TEXT PRIMARY KEY,
+    name          TEXT,
     dashboard_uid TEXT,
-    panel_id INTEGER DEFAULT 6,
-    discovered_at TEXT DEFAULT (datetime('now'))
+    panel_id      INTEGER DEFAULT 6,
+    discovered_at TEXT NOT NULL DEFAULT (${NOW})
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    chat_id      INTEGER PRIMARY KEY,
+    username     TEXT,
+    first_name   TEXT,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','approved','rejected')),
+    requested_at TEXT,
+    created_at   TEXT NOT NULL DEFAULT (${NOW}),
+    decided_at   TEXT,
+    decided_by   TEXT
   );
 
   CREATE TABLE IF NOT EXISTS subscriptions (
-    chat_id INTEGER NOT NULL,
-    inverter_id TEXT NOT NULL REFERENCES inverters(id) ON DELETE CASCADE,
-    subscribed_at TEXT DEFAULT (datetime('now')),
+    chat_id       INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+    inverter_id   TEXT    NOT NULL REFERENCES inverters(id)  ON DELETE CASCADE,
+    subscribed_at TEXT NOT NULL DEFAULT (${NOW}),
     PRIMARY KEY (chat_id, inverter_id)
   );
-`);
 
-// --- Inverters ---
+  CREATE TABLE IF NOT EXISTS alert_deliveries (
+    dedup_key    TEXT    NOT NULL,
+    chat_id      INTEGER NOT NULL,
+    delivered_at TEXT NOT NULL DEFAULT (${NOW}),
+    PRIMARY KEY (dedup_key, chat_id)
+  );
 
-export function getAllInverters() {
-  return db.prepare('SELECT * FROM inverters ORDER BY id').all();
+  -- PK subscriptions веде за chat_id, тож для WHERE inverter_id = ? він
+  -- непридатний. А це запит фан-ауту, який виконується всередині вебхука
+  -- й блокує читання Telegram — full scan тут неприйнятний.
+  CREATE INDEX IF NOT EXISTS idx_subs_inverter ON subscriptions(inverter_id);
+  CREATE INDEX IF NOT EXISTS idx_users_status  ON users(status);
+`;
+
+export function migrate(db) {
+  const current = db.pragma('user_version', { simple: true });
+  if (current === SCHEMA_VERSION) return;
+
+  db.transaction(() => {
+    if (current === 0) {
+      // Таблиця від дизайну alerts.js, від якого відмовились: алертинг
+      // лишається в Grafana. Поки вона є, схема виглядає більшою, ніж є.
+      db.exec('DROP TABLE IF EXISTS alert_state');
+      db.exec(SCHEMA_V1);
+    }
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  })();
 }
 
-export function getInverter(id) {
-  return db.prepare('SELECT * FROM inverters WHERE id = ?').get(id);
+export function createDb(filename) {
+  const db = new Database(filename);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  // Діагностичні команди (fly ssh console) відкривають другий конект; у WAL
+  // читач не заважає, але письменник ззовні заблокує бота без цього таймаута.
+  db.pragma('busy_timeout = 5000');
+  migrate(db);
+
+  return {
+    raw: db,
+    close: () => db.close(),
+
+    // --- Inverters ---
+    getAllInverters: () =>
+      db.prepare('SELECT rowid, * FROM inverters ORDER BY id').all(),
+
+    getInverter: id =>
+      db.prepare('SELECT rowid, * FROM inverters WHERE id = ?').get(id),
+
+    upsertInverter: (id, name = null, dashboardUid = null, panelId = 6) =>
+      db.prepare(`
+        INSERT INTO inverters (id, name, dashboard_uid, panel_id)
+        VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING
+      `).run(id, name ?? id, dashboardUid, panelId),
+
+    removeInverter: id =>
+      db.prepare('DELETE FROM inverters WHERE id = ?').run(id),
+
+    // --- Users ---
+    // Нік оновлюємо при кожному контакті: у Telegram його міняють, і застарілий
+    // нік в адмінці робить схвалення вгадуванням. Статус НЕ чіпаємо.
+    upsertUser: (chatId, username = null, firstName = null) =>
+      db.prepare(`
+        INSERT INTO users (chat_id, username, first_name) VALUES (?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET username = excluded.username,
+                                           first_name = excluded.first_name
+      `).run(chatId, username, firstName),
+
+    getUser: chatId =>
+      db.prepare('SELECT * FROM users WHERE chat_id = ?').get(chatId),
+
+    setUserStatus: (chatId, status, decidedBy) =>
+      db.prepare(
+        `UPDATE users SET status = ?, decided_at = ${NOW}, decided_by = ? WHERE chat_id = ?`
+      ).run(status, decidedBy, chatId),
+
+    deleteUser: chatId =>
+      db.prepare('DELETE FROM users WHERE chat_id = ?').run(chatId),
+
+    // Два запити замість JOIN з групуванням: користувач без підписок має
+    // лишатись у списку, інакше адмін не побачить того, хто щойно натиснув
+    // /start. Рядків тут десятки — вартість не має значення.
+    listUsersWithSubscriptions: () => {
+      const byChat = new Map();
+      for (const row of db.prepare(`
+        SELECT s.chat_id, i.rowid AS rowid, i.id, i.name FROM subscriptions s
+          JOIN inverters i ON i.id = s.inverter_id
+         ORDER BY i.id
+      `).all()) {
+        const { chat_id, ...inverter } = row;
+        if (!byChat.has(chat_id)) byChat.set(chat_id, []);
+        byChat.get(chat_id).push(inverter);
+      }
+      return db.prepare('SELECT * FROM users ORDER BY chat_id').all()
+        .map(user => ({ ...user, inverters: byChat.get(user.chat_id) ?? [] }));
+    },
+
+    // --- Subscriptions ---
+    // Одна транзакція: новий набір і скидання статусу нероздільні. Інакше
+    // між двома операціями існує мить, коли користувач уже підписаний на
+    // новий об'єкт, але ще вважається схваленим — і отримає по ньому алерт.
+    replaceSubscriptions: (chatId, inverterIds) => db.transaction(ids => {
+      db.prepare('DELETE FROM subscriptions WHERE chat_id = ?').run(chatId);
+      const insert = db.prepare(
+        'INSERT INTO subscriptions (chat_id, inverter_id) VALUES (?, ?)'
+      );
+      for (const id of ids) insert.run(chatId, id);
+      db.prepare(`
+        UPDATE users SET status = 'pending', requested_at = ${NOW},
+                         decided_at = NULL, decided_by = NULL
+         WHERE chat_id = ?
+      `).run(chatId);
+    })(inverterIds),
+
+    getSubscriptions: chatId =>
+      db.prepare(`
+        SELECT i.rowid, i.* FROM subscriptions s
+          JOIN inverters i ON i.id = s.inverter_id
+         WHERE s.chat_id = ? ORDER BY i.id
+      `).all(chatId),
+
+    // Єдине місце, де вирішується «кому слати». Фільтр за статусом стоїть
+    // саме тут і нікуди більше не дублюється — щоб його не можна було
+    // забути в іншій гілці коду.
+    getSubscribers: inverterId =>
+      db.prepare(`
+        SELECT s.chat_id FROM subscriptions s
+          JOIN users u ON u.chat_id = s.chat_id
+         WHERE s.inverter_id = ? AND u.status = 'approved'
+         ORDER BY s.chat_id
+      `).all(inverterId).map(r => r.chat_id),
+  };
 }
-
-export function upsertInverter(id, name = null, dashboardUid = null, panelId = 6) {
-  return db.prepare(`
-    INSERT INTO inverters (id, name, dashboard_uid, panel_id)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO NOTHING
-  `).run(id, name || id, dashboardUid, panelId);
-}
-
-export function removeInverter(id) {
-  return db.prepare('DELETE FROM inverters WHERE id = ?').run(id);
-}
-
-// --- Subscriptions ---
-
-export function subscribe(chatId, inverterId) {
-  return db.prepare(`
-    INSERT OR IGNORE INTO subscriptions (chat_id, inverter_id)
-    VALUES (?, ?)
-  `).run(chatId, inverterId);
-}
-
-export function unsubscribe(chatId, inverterId) {
-  return db.prepare(
-    'DELETE FROM subscriptions WHERE chat_id = ? AND inverter_id = ?'
-  ).run(chatId, inverterId);
-}
-
-export function getSubscriptions(chatId) {
-  return db.prepare(
-    'SELECT inverter_id FROM subscriptions WHERE chat_id = ?'
-  ).all(chatId).map(r => r.inverter_id);
-}
-
-export function getSubscribers(inverterId) {
-  return db.prepare(
-    'SELECT chat_id FROM subscriptions WHERE inverter_id = ?'
-  ).all(inverterId).map(r => r.chat_id);
-}
-
-export function getAllSubscriptions() {
-  return db.prepare(`
-    SELECT s.chat_id, s.inverter_id, i.name
-    FROM subscriptions s JOIN inverters i ON s.inverter_id = i.id
-    ORDER BY s.chat_id, s.inverter_id
-  `).all();
-}
-
-export default db;
