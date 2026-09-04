@@ -94,7 +94,28 @@ export function createAdminRoutes({ store, passwordHash, log, now = Date.now }) 
     } },
 
     { method: 'GET', path: '/admin/users', handler: guard(async (req, res, { session: s }) => {
-      html(res, 200, usersPage({ users: store.listUsersWithSubscriptions(), csrf: csrfToken(s.sid, keys.csrf) }));
+      html(res, 200, usersPage({
+        users: store.listUsersWithSubscriptions(),
+        inverters: store.getAllInverters(),
+        csrf: csrfToken(s.sid, keys.csrf),
+      }));
+    }) },
+
+    { method: 'POST', path: '/admin/inverters', handler: guard(async (req, res, { session: s }) => {
+      const form = await readForm(req);
+      if (!csrfValid(s.sid, form.get('csrf'), keys.csrf)) {
+        return html(res, 403, '<p>Недійсний токен форми. Оновіть сторінку.</p>');
+      }
+      // Перейменовуємо лише те, що справді змінилось: інакше кожне збереження
+      // писало б у всі рядки й забруднювало лог.
+      for (const inverter of store.getAllInverters()) {
+        const wanted = String(form.get(`name:${inverter.id}`) ?? '').trim() || inverter.id;
+        if (wanted !== inverter.name) {
+          store.renameInverter(inverter.id, wanted);
+          log.info(`Адмінка: обʼєкт ${inverter.id} → «${wanted}»`);
+        }
+      }
+      redirect(res, '/admin/users');
     }) },
 
     { method: 'POST', path: '/admin/users', handler: guard(async (req, res, { session: s }) => {

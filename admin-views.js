@@ -82,6 +82,15 @@ const CSS = `
   .empty{border:1px dashed var(--rule);border-radius:10px;padding:2rem 1.25rem;
     color:var(--ink-2);text-align:center}
 
+  h2{font-size:1.05rem;font-weight:650;margin:2.5rem 0 .35rem}
+  .hint{color:var(--ink-2);font-size:.875rem;margin:0 0 .9rem}
+  .obj{display:flex;align-items:center;gap:.9rem;padding:.75rem 1rem}
+  .obj + .obj{border-top:1px solid var(--rule)}
+  .obj input[type=text]{font:inherit;flex:1 1 auto;min-width:0;padding:.5rem .65rem;
+    border-radius:8px;border:1px solid var(--rule);background:var(--paper);color:var(--ink)}
+  .obj input[type=text]:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+  .obj .id{flex:0 0 auto}
+
   .login{max-width:22rem;margin:12vh auto 0}
   .login h1{margin-bottom:1.5rem}
   .login label{display:block;font-size:.85rem;color:var(--ink-2);margin-bottom:.35rem}
@@ -146,7 +155,29 @@ export function loginPage({ error } = {}) {
   </div>`);
 }
 
-export function usersPage({ users, csrf }) {
+// Обʼєкти показуємо серійником і полем назви: серійник лишається видимим, бо
+// саме за ним обʼєкт шукають у Grafana й у логах, а назва — те, що бачать люди.
+function objectsSection(inverters, csrf) {
+  if (!inverters?.length) return '';
+
+  const rows = inverters.map(inv => `<li class="obj">
+    <span class="id">${esc(inv.id)}</span>
+    <input type="text" name="name:${esc(inv.id)}" value="${esc(inv.name ?? inv.id)}"
+           aria-label="Назва обʼєкта ${esc(inv.id)}" maxlength="60">
+  </li>`).join('');
+
+  return `
+    <h2>Обʼєкти</h2>
+    <p class="hint">Назву бачать користувачі — у списку підписок і в сповіщеннях.
+       Порожнє поле поверне серійник.</p>
+    <form method="post" action="/admin/inverters">
+      <input type="hidden" name="csrf" value="${esc(csrf)}">
+      <ul class="board">${rows}</ul>
+      <div class="actions"><button type="submit">Зберегти назви</button></div>
+    </form>`;
+}
+
+export function usersPage({ users, csrf, inverters = [] }) {
   const waiting = users.filter(u => u.status === 'pending').length;
 
   const tally = users.length === 0 ? ''
@@ -157,7 +188,8 @@ export function usersPage({ users, csrf }) {
   if (users.length === 0) {
     return page('Доступ', `
       <header><h1>Доступ до об’єктів</h1></header>
-      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>`);
+      <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>
+      ${objectsSection(inverters, csrf)}`);
   }
 
   const lines = users.map(user => {
@@ -202,6 +234,7 @@ export function usersPage({ users, csrf }) {
         <span class="tally">Вимкнений перемикач знімає доступ.</span>
       </div>
     </form>
+    ${objectsSection(inverters, csrf)}
     <form class="actions ghost" method="post" action="/admin/logout">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
       <button type="submit">Вийти</button>

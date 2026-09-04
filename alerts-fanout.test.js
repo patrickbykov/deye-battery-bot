@@ -62,3 +62,28 @@ test('дедуп не пускає повтор у вікні й пускає п
   assert.equal(store.wasDelivered('k1', 6, 900_000), false, 'інший адресат — окремо');
   assert.equal(store.wasDelivered('k1', 5, 0), false, 'вікно вичерпалось — пускаємо');
 });
+
+test('серійник у тексті алерту замінюється на людську назву', () => {
+  // Grafana підставляє {{ $labels.inverter }}, тобто серійник. Людині,
+  // яка живе в тому будинку, він не каже нічого.
+  const text = formatAlert(
+    { status: 'firing', inverterId: '2512151417',
+      summary: '🔋 2512151417: заряд нижче 20%',
+      description: 'Батарея 2512151417 майже розряджена.' },
+    'Клочківська 117');
+  assert.doesNotMatch(text, /2512151417/);
+  assert.match(text, /Клочківська 117: заряд нижче 20%/);
+});
+
+test('без назви текст лишається як є', () => {
+  const text = formatAlert({ status: 'firing', inverterId: '2512151417',
+    summary: '🔋 2512151417: заряд нижче 20%', description: '' });
+  assert.match(text, /2512151417/);
+});
+
+test('назва підставляється і у відбій', () => {
+  const text = formatAlert(
+    { status: 'resolved', inverterId: '2512151417',
+      resolved: 'заряд 2512151417 піднявся вище 20%' }, 'Клочківська 117');
+  assert.match(text, /Клочківська 117/);
+});

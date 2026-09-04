@@ -111,6 +111,15 @@ export function createDb(filename) {
         ON CONFLICT(id) DO NOTHING
       `).run(id, name ?? id, dashboardUid, panelId, id),
 
+    // Назву задає адмін, щоб люди бачили «Клочківська 117», а не серійник.
+    // Порожнє значення повертає серійник: обʼєкт без назви гірший за обʼєкт
+    // із технічною назвою.
+    renameInverter: (id, name) => {
+      const clean = String(name ?? '').trim();
+      return db.prepare('UPDATE inverters SET name = ? WHERE id = ?')
+        .run(clean === '' ? id : clean, id);
+    },
+
     isIgnoredInverter: id =>
       !!db.prepare('SELECT 1 FROM ignored_inverters WHERE id = ?').get(id),
 

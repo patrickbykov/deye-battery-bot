@@ -127,3 +127,25 @@ test('повторне виявлення проігнорованого не с
   store.upsertInverter('INV1', 'Перший');
   assert.deepEqual(store.getAllInverters().map(i => i.id), ['INV2']);
 });
+
+test('перейменування обʼєкта зберігається', () => {
+  const store = seeded();
+  store.renameInverter('INV1', 'Клочківська 117');
+  assert.equal(store.getInverter('INV1').name, 'Клочківська 117');
+});
+
+test('порожня назва повертає серійник — щоб не лишити обʼєкт безіменним', () => {
+  const store = seeded();
+  store.renameInverter('INV1', 'Клочківська 117');
+  store.renameInverter('INV1', '   ');
+  assert.equal(store.getInverter('INV1').name, 'INV1');
+});
+
+test('discovery не затирає назву, задану адміном', () => {
+  // Інакше кожні 5 хвилин обʼєкт знову ставав би серійником, і причина була б
+  // неочевидна: назва просто зникає сама.
+  const store = seeded();
+  store.renameInverter('INV1', 'Клочківська 117');
+  store.upsertInverter('INV1', 'INV1', 'DASH');
+  assert.equal(store.getInverter('INV1').name, 'Клочківська 117');
+});

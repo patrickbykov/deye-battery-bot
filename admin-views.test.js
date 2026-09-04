@@ -54,3 +54,37 @@ test('порожній список не ламає сторінку', () => {
   const html = usersPage({ users: [], csrf: 't' });
   assert.match(html, /Користувачів|немає/i);
 });
+
+const inverters = [
+  { id: '2512151417', name: 'Клочківська 117' },
+  { id: 'SN-2', name: 'SN-2' },
+];
+
+test('обʼєкти мають поле для назви з поточним значенням', () => {
+  const html = usersPage({ users, csrf: 'tok', inverters });
+  assert.match(html, /name="name:2512151417" value="Клочківська 117"/);
+});
+
+test('серійник видно поруч — за ним обʼєкт шукають у логах і в Grafana', () => {
+  assert.match(usersPage({ users, csrf: 'tok', inverters }), /2512151417/);
+});
+
+test('назва обʼєкта екранується', () => {
+  const evil = [{ id: 'X', name: '"><script>alert(1)</script>' }];
+  const html = usersPage({ users, csrf: 'tok', inverters: evil });
+  assert.doesNotMatch(html, /<script/i);
+  assert.match(html, /&quot;&gt;&lt;script&gt;/);
+});
+
+test('форма обʼєктів теж має CSRF', () => {
+  const html = usersPage({ users, csrf: 'tok-9', inverters });
+  const forms = html.split('<form').slice(1);
+  for (const form of forms) {
+    assert.match(form, /name="csrf" value="tok-9"/, 'кожна форма, що змінює стан');
+  }
+});
+
+test('без обʼєктів секція не рендериться порожньою', () => {
+  const html = usersPage({ users, csrf: 'tok', inverters: [] });
+  assert.doesNotMatch(html, /name="name:/);
+});

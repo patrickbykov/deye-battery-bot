@@ -42,10 +42,10 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null }
 
   async function deliver(alerts) {
     for (const alert of alerts) {
-      const known = alert.inverterId ? !!store.getInverter(alert.inverterId) : false;
+      const inverter = alert.inverterId ? store.getInverter(alert.inverterId) : null;
       const { chatIds, reason } = selectRecipients({
         inverterId: alert.inverterId,
-        inverterKnown: known,
+        inverterKnown: !!inverter,
         subscribers: alert.inverterId ? store.getSubscribers(alert.inverterId) : [],
         adminChatId,
       });
@@ -54,7 +54,7 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null }
         log.warn(`Алерт «${alert.alertname}» без адресації по інверторах: ${reason}`);
       }
 
-      const text = formatAlert(alert);
+      const text = formatAlert(alert, inverter?.name);
       const key = dedupKey(alert);
       const targets = chatIds.slice(0, MAX_RECIPIENTS);
       if (chatIds.length > MAX_RECIPIENTS) {
