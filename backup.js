@@ -121,9 +121,15 @@ export function createDeploySnapshot({
   //
   // Без FLY_MACHINE_VERSION лишається сам час — тоді кожен вихід є окремою
   // подією, і це чесніше, ніж вдавати, що версія відома.
-  const at = new Date(now());
-  const stamp = at.toISOString().slice(0, 19).replaceAll(':', '-') + 'Z';
-  const slot = version ? `${stamp}-${version}` : stamp;
+  //
+  // now() читається в capture(), а НЕ тут. index.js конструює фабрику на
+  // верхньому рівні, тобто при старті процесу, а знімок знімається в
+  // shutdown — між ними дні. У бою це дало файл із датою на три доби
+  // старішою за самі дані.
+  const slotAt = at => {
+    const stamp = new Date(at).toISOString().slice(0, 19).replaceAll(':', '-') + 'Z';
+    return version ? `${stamp}-${version}` : stamp;
+  };
 
   // FLY_MACHINE_VERSION виявився ULID, а ULID кодує момент СТВОРЕННЯ версії:
   // у бою це були 10:29, тоді як знімок знявся о 10:54. Тому час беремо свій,
@@ -151,6 +157,8 @@ export function createDeploySnapshot({
   // закриває БД, і лише тоді send(): інакше чекпойнт — те, заради чого
   // обробник сигналу існує, — чекав би на Telegram до трьох секунд.
   function capture() {
+    const at = now();
+    const slot = slotAt(at);
     const target = path.join(dir, `${PREDEPLOY_PREFIX}${slot}.db`);
     // Читаємо ДО запису: файл цієї ж версії означає, що вона вже виходила,
     // тобто це повторний рестарт, а не нова версія. Шукаємо за версією, а не
@@ -191,15 +199,17 @@ export function createDeploySnapshot({
       log.error(`Знімок перед деплоєм не вдався: ${err.message}`);
     }
 
-    return { dump, seenBefore };
+    // slot і at їдуть разом із дампом: send() працює вже після close(), і
+    // читати час удруге означало б назвати файл інакше, ніж копію на волюмі.
+    return { dump, seenBefore, slot, at };
   }
 
-  async function send({ dump, seenBefore } = {}) {
+  async function send({ dump, seenBefore, slot, at } = {}) {
     if (seenBefore || !dump || chatId === null || chatId === undefined) return;
 
     try {
       await withBudget(sendDocument(chatId, dump, `deye-predeploy-${slot}.json`,
-        `💾 Копія перед зміною версії, знята ${at.toISOString().slice(0, 19).replace('T', ' ')} UTC`));
+        `💾 Копія перед зміною версії, знята ${new Date(at).toISOString().slice(0, 19).replace('T', ' ')} UTC`));
       log.info(`Знімок перед деплоєм надіслано: deye-predeploy-${slot}.json`);
     } catch (err) {
       log.error(`Знімок перед деплоєм не надіслано: ${err.message}`);

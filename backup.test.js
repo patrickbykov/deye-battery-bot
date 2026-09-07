@@ -418,3 +418,47 @@ test('підпис у чаті читабельний для людини', () =
     h.cleanup();
   });
 });
+
+test('час береться в мить знімка, а не в мить створення фабрики', () => {
+  // Знайдено в бою: index.js конструює фабрику на верхньому рівні, тобто
+  // при старті процесу, а capture() відбувається в shutdown — між ними дні.
+  // Файл назвався predeploy-2026-09-04T11-00-57Z, хоча знімок знявся 7-го.
+  const dir = tmpdir();
+  const store = createDb(path.join(dir, 'bot.db'));
+
+  let clock = new Date('2026-09-04T11:00:57Z').getTime();
+  const snapshot = createDeploySnapshot({
+    store, dir, keep: 3, chatId: null, version: '33',
+    sendDocument: async () => {}, log: { info() {}, error() {} },
+    now: () => clock,
+  });
+
+  // Процес прожив три доби й аж тоді отримав сигнал.
+  clock = new Date('2026-09-07T14:46:55Z').getTime();
+  snapshot.capture();
+
+  assert.deepEqual(snapshots(dir), ['predeploy-2026-09-07T14-46-55Z-33.db']);
+  store.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('підпис у чаті теж каже час знімка, а не час старту процесу', async () => {
+  const dir = tmpdir();
+  const store = createDb(path.join(dir, 'bot.db'));
+  const captions = [];
+
+  let clock = new Date('2026-09-04T11:00:57Z').getTime();
+  const snapshot = createDeploySnapshot({
+    store, dir, keep: 3, chatId: 1, version: '33',
+    sendDocument: async (c, b, n, caption) => captions.push(caption),
+    log: { info() {}, error() {} },
+    now: () => clock,
+  });
+
+  clock = new Date('2026-09-07T14:46:55Z').getTime();
+  await snapshot.runOnce();
+
+  assert.match(captions[0], /2026-09-07 14:46:55/);
+  store.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
