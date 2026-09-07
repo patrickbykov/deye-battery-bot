@@ -5,6 +5,10 @@ export const GRAFANA_SA_TOKEN = process.env.GRAFANA_SA_TOKEN;
 export const GRAFANA_DS_UID = process.env.GRAFANA_DS_UID;
 export const DASHBOARD_UID = process.env.GRAFANA_DASHBOARD_UID;
 export const INFLUXDB_BUCKET = process.env.INFLUXDB_BUCKET || 'monitoring';
+// Панель теплокарти відключень на тому самому дашборді. 12 — не здогадка:
+// панелі 1–11 зайняті, і саме під цим id панель створено. Env лишається на
+// випадок перестворення — хибне число дасть не помилку, а чужу картинку.
+export const OUTAGE_PANEL_ID = Number(process.env.GRAFANA_OUTAGE_PANEL_ID) || 12;
 // Тимчасово: поки немає підписок з БД (задача 10), команди працюють з одним
 // інвертором. Дефолту навмисно немає: значення мусить збігатися з тегом
 // `inverter`, який пише колектор (SN інвертора). Хибний дефолт давав би

@@ -60,10 +60,36 @@ async function queryGrafanaOnce(fluxQuery) {
 
 export const queryGrafana = flux => withGrafanaRetry(() => queryGrafanaOnce(flux));
 
-export async function renderGrafanaPanel(inverter) {
-  const dashUid = inverter.dashboard_uid || DASHBOARD_UID;
-  const panelId = inverter.panel_id || 6;
-  const renderUrl = `${GRAFANA_URL}/render/d-solo/${dashUid}/?orgId=1&panelId=${panelId}&width=800&height=400&from=now-24h&to=now&var-inverter=${encodeURIComponent(inverter.id)}`;
+// Панель SOC — та, яку рендерить /graph. Число зашите в дашборді, тож
+// живе тут іменованою константою, а не магічною шісткою в тілі функції.
+export const SOC_PANEL_ID = 6;
+
+// Чиста частина рендера: вибір дашборда, панелі й вікна. Винесена окремо,
+// бо саме тут ховається пастка задачі 08 — без var-inverter Grafana мовчки
+// віддає ту саму картинку для всіх об'єктів, і помилки при цьому немає.
+export function panelRenderUrl(inverter, {
+  baseUrl, defaultDashboardUid, panelId, from = 'now-24h', to = 'now', width = 800, height = 400,
+} = {}) {
+  const dashUid = inverter.dashboard_uid || defaultDashboardUid;
+  // Явний panelId має перекривати panel_id об'єкта: у БД він вказує на
+  // панель SOC саме цього об'єкта, а теплокарта — спільна для всіх.
+  const panel = panelId ?? inverter.panel_id ?? SOC_PANEL_ID;
+  const params = new URLSearchParams({
+    orgId: '1',
+    panelId: String(panel),
+    width: String(width),
+    height: String(height),
+    from,
+    to,
+    'var-inverter': inverter.id,
+  });
+  return `${baseUrl}/render/d-solo/${dashUid}/?${params}`;
+}
+
+export async function renderGrafanaPanel(inverter, options = {}) {
+  const renderUrl = panelRenderUrl(inverter, {
+    baseUrl: GRAFANA_URL, defaultDashboardUid: DASHBOARD_UID, ...options,
+  });
   const res = await fetchWithTimeout(renderUrl, {
     headers: { 'Authorization': `Bearer ${GRAFANA_SA_TOKEN}` }
   });

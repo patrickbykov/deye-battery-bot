@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand, createCommands } from './commands.js';
+import { parseCommand, createCommands, outageSummaryFlux } from './commands.js';
+import { OUTAGE_PANEL_ID } from './config.js';
+import { GRID_PRESENT_VOLTS } from './helpers.js';
 import { createDb } from './db.js';
 import { decisionMessage } from './helpers.js';
 
@@ -37,6 +39,7 @@ function harness() {
   const sent = [];
   const photos = [];
   const adminMsgs = [];
+  const renders = [];
   const commands = createCommands({
     store,
     telegram: {
@@ -44,18 +47,28 @@ function harness() {
       sendPhoto: async (chatId, buf, caption) => photos.push({ chatId, caption }),
     },
     grafana: {
-      queryGrafana: async () => ({ results: { A: { frames: [{
-        schema: { fields: [{ name: '_time' }, { name: 'soc' }, { name: 'voltage' }] },
-        data: { values: [[1788455061000], [98], [53.9]] },
-      }] } } }),
-      renderGrafanaPanel: async () => Buffer.from('png'),
+      // Відповідь залежить від запиту, як у справжньої Grafana: підсумок
+      // відключень має інші поля, ніж зріз батареї.
+      queryGrafana: async flux => flux.includes('reduce')
+        ? ({ results: { A: { frames: [{
+            schema: { fields: [{ name: 'observed' }, { name: 'outage' }, { name: 'since' }] },
+            data: { values: [[5040], [200], [1788455061000]] },
+          }] } } })
+        : ({ results: { A: { frames: [{
+            schema: { fields: [{ name: '_time' }, { name: 'soc' }, { name: 'voltage' }] },
+            data: { values: [[1788455061000], [98], [53.9]] },
+          }] } } }),
+      renderGrafanaPanel: async (inverter, options) => {
+        renders.push({ inverter, options });
+        return Buffer.from('png');
+      },
       getDashboardLink: inv => `https://g/d/${inv.dashboard_uid}`,
     },
     notifyAdmin: async msg => adminMsgs.push(msg),
     log: { info() {}, warn() {}, error() {} },
     sleep: () => Promise.resolve(),
   });
-  return { store, commands, sent, photos, adminMsgs, ctx: { chatId: 7 } };
+  return { store, commands, sent, photos, adminMsgs, renders, ctx: { chatId: 7 } };
 }
 
 test('/list показує всі інвертори з БД', async () => {
@@ -615,4 +628,95 @@ test('зняття доступу з Telegram каже про зняття, а �
 
   await callbacks.get('a')({ chatId: 99, messageId: 1, callbackId: 'c', from: { id: 99 }, value: 'no:7' });
   assert.match(toUser[0].t, /Доступ закрито/);
+});
+
+test('outageSummaryFlux фільтрує за об’єктом', () => {
+  // Без цього фільтра запит змішає всі об'єкти в одну цифру й підхопить
+  // фантомну серію `test`, що лежить у бакеті до кінця retention.
+  const flux = outageSummaryFlux('INV1');
+  assert.match(flux, /r\.inverter == "INV1"/);
+});
+
+test('outageSummaryFlux рахує за тим самим порогом, що й /status', () => {
+  // Якщо поріг розійдеться з gridPresent, бот казатиме «мережа є» і водночас
+  // рахуватиме цю саму хвилину як відключення.
+  assert.match(outageSummaryFlux('INV1'), new RegExp(`< ${GRID_PRESENT_VOLTS}\\.0`));
+});
+
+test('outageSummaryFlux не рахує години, у яких не було жодної точки', () => {
+  // Порожня година, порахована як нуль хвилин без світла, — це тиха заява
+  // «світло було», хоча насправді дані не надходили.
+  assert.match(outageSummaryFlux('INV1'), /points > 0/);
+});
+
+test('/outages шле картинку з назвою обʼєкта в підписі', async () => {
+  const { commands, store, photos, ctx } = harness();
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+  await commands.get('/outages')(ctx);
+  assert.equal(photos.length, 1);
+  assert.match(photos[0].caption, /Перший/);
+});
+
+test('/outages рендерить теплокарту за 30 днів, а не панель SOC за добу', async () => {
+  // Найтихіша з можливих поломок: без явного panelId рендер віддасть панель
+  // SOC цього ж об'єкта — картинка буде осмислена, але не та.
+  const { commands, store, renders, ctx } = harness();
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+  await commands.get('/outages')(ctx);
+  assert.equal(renders[0].options.panelId, OUTAGE_PANEL_ID);
+  assert.equal(renders[0].options.from, 'now-30d');
+});
+
+test('/outages показує підсумок у підписі, а не саму лише картинку', async () => {
+  const { commands, store, photos, ctx } = harness();
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+  await commands.get('/outages')(ctx);
+  assert.match(photos[0].caption, /3 год 20 хв/);
+});
+
+test('/outages при збої рендера дає посилання, а не мовчанку', async () => {
+  const { store, sent } = harness();
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+  const commands = createCommands({
+    store,
+    telegram: {
+      sendMessage: async (chatId, text) => sent.push({ chatId, text }),
+      sendPhoto: async () => { throw new Error('не має дійти'); },
+    },
+    grafana: {
+      queryGrafana: async () => ({ results: { A: { frames: [] } } }),
+      renderGrafanaPanel: async () => { throw new Error('Render failed: 500'); },
+      getDashboardLink: inv => `https://g/d/${inv.dashboard_uid}`,
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+  await commands.get('/outages')({ chatId: 7 });
+  assert.match(sent[0].text, /https:\/\/g\/d\//);
+});
+
+test('/outages без підписок → підказка, а не порожнеча', async () => {
+  const { commands, sent, ctx } = harness();
+  await commands.get('/outages')(ctx);
+  assert.match(sent[0].text, /немає підписок/i);
+});
+
+test('несхвалений не доходить до рендера теплокарти', async () => {
+  // Той самий гейт, що й для /graph: /render — метрована операція.
+  const { commands, sent, grafana } = gateHarness('pending');
+  await commands.get('/outages')({ chatId: 7 });
+  assert.equal(grafana(), false, 'запиту до Grafana бути не повинно');
+  assert.match(sent[0], /розгляд/i);
+});
+
+test('/help згадує /outages серед щоденних команд', async () => {
+  const { commands, sent, ctx } = harness();
+  await commands.get('/help')(ctx);
+  const text = sent[0].text;
+  assert.match(text, /\/outages/);
+  assert.ok(text.indexOf('/outages') < text.indexOf('/subscribe'), '/outages має бути вище');
 });

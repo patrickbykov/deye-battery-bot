@@ -49,7 +49,7 @@
 |---|---|
 | `/subscribe` | усі — вибір об'єктів і заявка |
 | `/list`, `/mysubs` | усі |
-| `/status`, `/graph` | лише схвалені |
+| `/status`, `/graph`, `/outages` | лише схвалені |
 | `/forgetme` | усі — видалити свій запис (з підтвердженням) |
 | `/users`, `/remove_inverter <id>`, `/export` | лише `ADMIN_CHAT_ID` |
 

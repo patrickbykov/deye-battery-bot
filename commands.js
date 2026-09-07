@@ -1,6 +1,6 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent, decisionMessage } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent, decisionMessage, formatOutageSummary, GRID_PRESENT_VOLTS } from './helpers.js';
 import { buildKeyboard, readChecked } from './subs-keyboard.js';
-import { INFLUXDB_BUCKET } from './config.js';
+import { INFLUXDB_BUCKET, OUTAGE_PANEL_ID } from './config.js';
 
 // Telegram тримає ~30 msg/s. При кількох підписках /status шле кілька
 // повідомлень поспіль, тож між ними — пауза.
@@ -15,6 +15,56 @@ export function parseCommand(text) {
   const match = String(text ?? '').trim().match(/^(\/\w+)(?:\s+(.+?))?\s*$/);
   if (!match) return null;
   return { cmd: match[1].toLowerCase(), arg: match[2] };
+}
+
+// Глибина вікна дорівнює retention бакета: глибше даних просто немає, і
+// показувати порожні тижні означало б видавати відсутність історії за
+// відсутність відключень.
+const OUTAGE_DAYS = 30;
+
+// Скільки хвилин не було світла, погодинно, і скільки годин ми взагалі
+// спостерігали. Три речі тут не косметичні:
+//
+// `fill(usePrevious: true)` робить із точок раз на 5 хв ступінчасту функцію,
+// інакше відключення рахувалося б кількістю точок, а не тривалістю.
+//
+// `timeSrc: "_start"` — aggregateWindow за замовчуванням підписує вікно його
+// КІНЦЕМ. Без цього хвилини з 14:00–15:00 лягли б у клітинку «15:00»,
+// і сітка виявилась би зсунутою на годину; заразом зникає дубль-клітинка,
+// яку дає останнє неповне вікно.
+//
+// `points > 0` відкидає години, у яких не було жодної сирої точки. Нуль
+// хвилин без світла в годині без даних — це заява «світло було», зроблена
+// на порожньому місці.
+export function outageSummaryFlux(inverterId, { bucket = INFLUXDB_BUCKET, days = OUTAGE_DAYS } = {}) {
+  return `base = from(bucket: "${bucket}")
+  |> range(start: -${days}d)
+  |> filter(fn: (r) => r._measurement == "grid" and r._field == "voltage")
+  |> filter(fn: (r) => r.inverter == "${inverterId}")
+
+points = base
+  |> aggregateWindow(every: 1h, fn: count, timeSrc: "_start", createEmpty: true)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {_value: "points"})
+
+minutes = base
+  |> aggregateWindow(every: 1m, fn: last, timeSrc: "_start", createEmpty: true)
+  |> fill(column: "_value", usePrevious: true)
+  |> map(fn: (r) => ({ r with _value: if exists r._value and r._value < ${GRID_PRESENT_VOLTS}.0 then 1.0 else 0.0 }))
+  |> aggregateWindow(every: 1h, fn: sum, timeSrc: "_start", createEmpty: true)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {_value: "minutes"})
+
+join(tables: {m: minutes, p: points}, on: ["_time"])
+  |> filter(fn: (r) => r.points > 0)
+  |> group()
+  |> reduce(identity: {observed: 0.0, outage: 0.0, since: 0.0}, fn: (r, accumulator) => ({
+       observed: accumulator.observed + 60.0,
+       outage: accumulator.outage + r.minutes,
+       since: if accumulator.since == 0.0 or float(v: uint(v: r._time)) / 1000000.0 < accumulator.since
+              then float(v: uint(v: r._time)) / 1000000.0
+              else accumulator.since,
+     }))`;
 }
 
 // Один хелпер на обидва шляхи подачі заявки — з клавіатури й текстовий
@@ -151,6 +201,7 @@ export function createCommands({
 
 /status — поточний стан
 /graph — графік за 24 години
+/outages — скільки часу не було світла
 
 /list — доступні об’єкти
 /subscribe — обрати об’єкти й подати заявку
@@ -250,6 +301,39 @@ export function createCommands({
         log.error(`/graph ${inverter.id}: ${err.message}`);
         await sendMessage(chatId,
           `📊 <a href="${getDashboardLink(inverter)}">${inverter.name} — відкрити дашборд</a>\n\n⚠️ Графік тимчасово недоступний.`);
+      }
+    });
+  }));
+
+  // Збій підрахунку не має забирати картинку: сітка сама по собі відповідає
+  // на «коли вимикали», навіть без підсумкового рядка.
+  async function outageSummaryOf(inverter) {
+    try {
+      const frames = (await queryGrafana(outageSummaryFlux(inverter.id)))?.results?.A?.frames;
+      if (!frames?.length) return null;
+      const f = parseGrafanaFields(frames);
+      return { observedMinutes: f.observed, outageMinutes: f.outage, since: f.since };
+    } catch (err) {
+      log.error(`/outages підсумок ${inverter.id}: ${err.message}`);
+      return null;
+    }
+  }
+
+  handlers.set('/outages', gated(async ({ chatId }) => {
+    await eachSubscription(chatId, async inverter => {
+      try {
+        const summary = await outageSummaryOf(inverter);
+        const image = await renderGrafanaPanel(inverter, {
+          panelId: OUTAGE_PANEL_ID, from: `now-${OUTAGE_DAYS}d`,
+        });
+        // Без розмітки й без екранування: sendPhoto не ставить parse_mode,
+        // тож назва об'єкта з кутовою дужкою тут нікуди не вибухне.
+        await sendPhoto(chatId, image,
+          `⚡ ${inverter.name} — без світла\n\n${formatOutageSummary(summary ?? {})}`);
+      } catch (err) {
+        log.error(`/outages ${inverter.id}: ${err.message}`);
+        await sendMessage(chatId,
+          `⚡ <a href="${getDashboardLink(inverter)}">${inverter.name} — відкрити дашборд</a>\n\n⚠️ Теплокарта тимчасово недоступна.`);
       }
     });
   }));

@@ -21,6 +21,22 @@ export function formatKyivTime(time) {
   return new Date(time).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' });
 }
 
+// Назви місяців зашиті, а не взяті з Intl: month:'short' дає різний рядок на
+// різних збірках ICU (з крапкою й без), а це текст, який читає людина.
+// З Intl береться лише зсув київського поясу — числами, тобто стабільно.
+const MONTHS_SHORT = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
+
+export function formatKyivDate(time) {
+  if (!time) return 'N/A';
+  const date = new Date(time);
+  if (!Number.isFinite(date.getTime())) return 'N/A';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Kyiv', day: 'numeric', month: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${Number(parts.day)} ${MONTHS_SHORT[Number(parts.month) - 1]} ${parts.hour}:${parts.minute}`;
+}
+
 export function parseGrafanaFields(frames) {
   const schema = frames[0].schema?.fields || [];
   const values = frames[0].data?.values || [];
@@ -114,4 +130,48 @@ export function decisionMessage(before, after) {
 // й не має підстав запідозрити, що це рішення, а не поломка.
 export function objectRemoved(name) {
   return `🗑 Обʼєкт «${name}» більше не відстежується. Підписку на нього знято.`;
+}
+
+// «год» і «хв» не відмінюються, а «доба» — відмінюється, і машинне «3 доба»
+// підриває довіру рівно до тієї цифри, заради якої віджет робиться.
+function pluralUk(n, one, few, many) {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = n % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+// Від доби і вище хвилини відкидаються навмисно: «3 доби 11 год 59 хв» —
+// точність, якої ніхто не читає, а вікно спостережень потрібне для масштабу.
+export function formatDuration(minutes) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  const days = Math.floor(total / 1440);
+  if (days > 0) {
+    const hours = Math.floor((total - days * 1440) / 60);
+    return `${days} ${pluralUk(days, 'доба', 'доби', 'діб')}` + (hours ? ` ${hours} год` : '');
+  }
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  if (hours === 0) return `${mins} хв`;
+  return `${hours} год` + (mins ? ` ${mins} хв` : '');
+}
+
+// Три різні відповіді, які легко злити в одну й тим збрехати:
+// «нічого не вимикали», «вимикали стільки-то» і «ми ще нічого не знаємо».
+// Третій випадок — головний: «без світла 0 хв» при порожньому бакеті
+// неможливо відрізнити від справжнього нуля, а це рівно той тип тихої
+// неправди, через який алерти мовчали два місяці (docs/grafana-alerting.md).
+export function formatOutageSummary({ observedMinutes, outageMinutes, since }) {
+  const observed = Math.max(0, Number(observedMinutes) || 0);
+  if (observed === 0) return 'Даних за цей період ще немає — рахувати нема за чим.';
+
+  const outage = Math.max(0, Number(outageMinutes) || 0);
+  // Без розмітки: підпис до фото йде через sendPhoto, який не встановлює
+  // parse_mode, тож <b> показався б літерами.
+  const head = outage === 0
+    ? 'Відключень не було.'
+    : `Без світла: ${formatDuration(outage)}`;
+  return `${head}\nСпостереження: ${formatDuration(observed)}, з ${formatKyivDate(since)}`;
 }

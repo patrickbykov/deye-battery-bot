@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage, objectRemoved } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage, objectRemoved, formatDuration, formatKyivDate, formatOutageSummary } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -148,4 +148,77 @@ test('видалення обʼєкта пояснює людині, що ста
   const text = objectRemoved('Клочківська 117');
   assert.match(text, /Клочківська 117/);
   assert.match(text, /підписк/i);
+});
+
+test('formatDuration: нуль — це «0 хв», а не порожній рядок', () => {
+  // Підпис «Без світла: » без числа виглядає як зламаний бот, а не як
+  // відповідь «відключень не було».
+  assert.equal(formatDuration(0), '0 хв');
+});
+
+test('formatDuration: години й хвилини разом', () => {
+  assert.equal(formatDuration(95), '1 год 35 хв');
+});
+
+test('formatDuration: рівні години — без хвостика «0 хв»', () => {
+  assert.equal(formatDuration(120), '2 год');
+});
+
+test('formatDuration: від доби рахуємо в добах, хвилини відкидаємо', () => {
+  // «3 доби 11 год 59 хв» — точність, якої ніхто не читає. Вікно
+  // спостережень потрібне для масштабу, а не для звірки.
+  assert.equal(formatDuration(5040), '3 доби 12 год');
+});
+
+test('formatDuration: українські форми числівника для доби', () => {
+  // 1 доба / 2 доби / 5 діб — інакше підпис читається як машинний переклад
+  // рівно там, де людина шукає довіри до цифри.
+  assert.equal(formatDuration(1440), '1 доба');
+  assert.equal(formatDuration(7200), '5 діб');
+  assert.equal(formatDuration(1440 * 21), '21 доба');
+  assert.equal(formatDuration(1440 * 22), '22 доби');
+});
+
+test('formatKyivDate: київський час, місяць словом, без ICU-назв', () => {
+  // Назви місяців зашиті навмисно: Intl з month:'short' дає різний рядок
+  // на різних збірках ICU, а це текст, який бачить людина.
+  assert.equal(formatKyivDate('2026-09-04T08:14:55Z'), '4 вер 11:14');
+});
+
+test('formatOutageSummary: нуль відключень названо словами, а не нулем', () => {
+  // «Без світла: 0 хв» неможливо відрізнити від збою підрахунку. Людина
+  // мусить бачити, що система рахувала й нічого не знайшла.
+  const text = formatOutageSummary({
+    observedMinutes: 5040, outageMinutes: 0, since: '2026-09-04T08:14:55Z',
+  });
+  assert.match(text, /Відключень не було/);
+  assert.match(text, /3 доби 12 год/);
+  assert.match(text, /4 вер 11:14/);
+});
+
+test('formatOutageSummary: без даних не звітує нулем', () => {
+  // Найнебезпечніший випадок: порожній бакет і «без світла 0 хв» — це
+  // тиха брехня рівно того типу, через яку алерти мовчали два місяці.
+  const text = formatOutageSummary({
+    observedMinutes: 0, outageMinutes: 0, since: null,
+  });
+  assert.doesNotMatch(text, /Відключень не було/);
+  assert.match(text, /даних/i);
+});
+
+test('formatOutageSummary: реальне відключення показане в годинах', () => {
+  const text = formatOutageSummary({
+    observedMinutes: 5040, outageMinutes: 200, since: '2026-09-04T08:14:55Z',
+  });
+  assert.match(text, /3 год 20 хв/);
+});
+
+test('formatOutageSummary не містить HTML — підпис до фото йде без parse_mode', () => {
+  // telegram.sendPhoto не встановлює parse_mode, тож <b> показався б
+  // літерами. А якби встановлював — незакритий тег у назві об'єкта завалив
+  // би всю відправку з 400, як це вже було з алертами.
+  const text = formatOutageSummary({
+    observedMinutes: 5040, outageMinutes: 200, since: '2026-09-04T08:14:55Z',
+  });
+  assert.doesNotMatch(text, /[<>]/);
 });

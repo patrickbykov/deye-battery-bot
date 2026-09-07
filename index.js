@@ -296,6 +296,7 @@ async function main() {
         commands: [
           { command: 'status', description: '🔋 Поточний стан' },
           { command: 'graph', description: '📊 Графік за 24 години' },
+          { command: 'outages', description: '⚡ Скільки не було світла' },
           { command: 'list', description: '📋 Доступні об’єкти' },
           { command: 'subscribe', description: '➕ Обрати об’єкти' },
           { command: 'mysubs', description: '📌 Мої підписки' },
