@@ -81,15 +81,31 @@ export function batteryState(power) {
   return watts < 0 ? 'заряджається' : 'розряджається';
 }
 
-// Той самий поріг, що в правилі «⚡ Немає живлення від мережі» (docs/grafana-alerting.md).
-// Якщо вони розійдуться, бот казатиме «мережа є» саме тоді, коли надходить
-// сповіщення про її зникнення.
+// Ті самі пороги, що в правилах «⚡ Немає живлення від мережі» і «🔌 Інвертор
+// відʼєднався від мережі» (docs/grafana-alerting.md). Якщо вони розійдуться,
+// бот казатиме «мережа є» саме тоді, коли надходить сповіщення про її
+// зникнення.
 export const GRID_PRESENT_VOLTS = 50;
+export const GRID_CURRENT_AMPS = 0.1;
 
-export function gridPresent(voltage) {
+// Три стани, а не два. Двійка «є / немає» будувалась на напрузі й через це
+// мовчала про цілий клас подій: 29 і 30 сер 2026 інвертор двічі йшов на
+// батарею при цілком нормальних 233 і 242 В — нулем був лише струм.
+//
+// Порядок перевірок має значення: блекаут визначає напруга, і струм у ньому
+// теж нульовий, тож перевіряти струм першим означало б називати блекаут
+// відʼєднанням.
+export function gridState({ voltage, current } = {}) {
   const volts = Number(voltage);
   if (voltage === null || voltage === undefined || !Number.isFinite(volts)) return null;
-  return volts >= GRID_PRESENT_VOLTS;
+  if (volts < GRID_PRESENT_VOLTS) return 'blackout';
+
+  // Струму може не бути взагалі: у даних до 9 вер 2026 поля ще немає, та й
+  // не кожен пристрій його віддає. Мовчазний нуль на цьому місці означав би
+  // повідомлення про відʼєднання там, де ми просто не знаємо.
+  const amps = Number(current);
+  if (current === null || current === undefined || !Number.isFinite(amps)) return 'present';
+  return amps < GRID_CURRENT_AMPS ? 'detached' : 'present';
 }
 
 // Ніки в Telegram регістронезалежні, а зберігаємо ми їх як TEXT PRIMARY KEY

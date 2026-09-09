@@ -1,4 +1,4 @@
-import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridPresent, decisionMessage, formatOutageSummary, GRID_PRESENT_VOLTS } from './helpers.js';
+import { fmt, renderSocBar, formatKyivTime, parseGrafanaFields, escapeHtml, batteryState, gridState, decisionMessage, formatOutageSummary, GRID_PRESENT_VOLTS, GRID_CURRENT_AMPS } from './helpers.js';
 import { buildKeyboard, readChecked } from './subs-keyboard.js';
 import { INFLUXDB_BUCKET, OUTAGE_PANEL_ID } from './config.js';
 
@@ -39,18 +39,26 @@ const OUTAGE_DAYS = 30;
 export function outageSummaryFlux(inverterId, { bucket = INFLUXDB_BUCKET, days = OUTAGE_DAYS } = {}) {
   return `base = from(bucket: "${bucket}")
   |> range(start: -${days}d)
-  |> filter(fn: (r) => r._measurement == "grid" and r._field == "voltage")
-  |> filter(fn: (r) => r.inverter == "${inverterId}")
+  |> filter(fn: (r) => r._measurement == "grid" and r.inverter == "${inverterId}")
 
 points = base
+  |> filter(fn: (r) => r._field == "voltage")
   |> aggregateWindow(every: 1h, fn: count, timeSrc: "_start", createEmpty: true)
   |> keep(columns: ["_time", "_value"])
   |> rename(columns: {_value: "points"})
 
 minutes = base
+  |> filter(fn: (r) => r._field == "voltage" or r._field == "current")
   |> aggregateWindow(every: 1m, fn: last, timeSrc: "_start", createEmpty: true)
   |> fill(column: "_value", usePrevious: true)
-  |> map(fn: (r) => ({ r with _value: if exists r._value and r._value < ${GRID_PRESENT_VOLTS}.0 then 1.0 else 0.0 }))
+  |> map(fn: (r) => ({ r with _value:
+       if not exists r._value then 0.0
+       else if r._field == "voltage" then (if r._value < ${GRID_PRESENT_VOLTS}.0 then 1.0 else 0.0)
+       else (if r._value < ${GRID_CURRENT_AMPS} then 1.0 else 0.0) }))
+  |> group(columns: ["_time"])
+  |> max()
+  |> group()
+  |> sort(columns: ["_time"])
   |> aggregateWindow(every: 1h, fn: sum, timeSrc: "_start", createEmpty: true)
   |> keep(columns: ["_time", "_value"])
   |> rename(columns: {_value: "minutes"})
@@ -135,19 +143,24 @@ export function createCommands({
   }
 
   // Окремим запитом, а не разом із батареєю: обидва виміри мають поля
-  // voltage і power, і pivot злив би їх в одну колонку. Збій тут не має
-  // забирати стан батареї — дані мережі другорядні.
-  async function gridVoltageOf(inverter) {
+  // voltage і power, і спільний pivot злив би їх в одну колонку. Збій тут не
+  // має забирати стан батареї — дані мережі другорядні.
+  //
+  // Напруга і струм — разом, бо без струму «мережа є» і «інвертор пішов на
+  // батарею» не розрізнити. Свій pivot кладе обидва поля в один кадр: інакше
+  // last() дає два кадри, а parseGrafanaFields читає лише перший.
+  async function gridOf(inverter) {
     const flux = `from(bucket: "${INFLUXDB_BUCKET}")
   |> range(start: -1h)
-  |> filter(fn: (r) => r._measurement == "grid" and r._field == "voltage")
+  |> filter(fn: (r) => r._measurement == "grid" and (r._field == "voltage" or r._field == "current"))
   |> filter(fn: (r) => r.inverter == "${inverter.id}")
-  |> last()`;
+  |> last()
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")`;
     try {
       const frames = (await queryGrafana(flux))?.results?.A?.frames;
       if (!frames?.length) return null;
       const f = parseGrafanaFields(frames);
-      return f.voltage ?? f._value ?? null;
+      return { voltage: f.voltage ?? f._value ?? null, current: f.current ?? null };
     } catch (err) {
       log.error(`/status мережа ${inverter.id}: ${err.message}`);
       return null;
@@ -172,10 +185,15 @@ export function createCommands({
 
     // Рядка немає взагалі, якщо даних немає: «невідомо» не інформує, а
     // лише додає шуму в повідомлення, яке читають поспіхом.
-    const grid = gridPresent(await gridVoltageOf(inverter));
+    // Три стани: мережі немає взагалі; мережа на вводі є, але інвертор від
+    // неї відʼєднався; усе гаразд. Середній стан виглядає для людини так
+    // само, як блекаут — будинок на батареї, — але причина інша, і плутати
+    // їх означало б слати «світла немає» туди, де воно є.
+    const grid = gridState(await gridOf(inverter) ?? {});
     const gridLine = grid === null ? ''
-      : grid ? '\n🔌 Мережа: <b>є</b>'
-             : '\n🔌 Мережа: <b>немає</b> — обʼєкт живиться від батареї';
+      : grid === 'present' ? '\n🔌 Мережа: <b>є</b>'
+      : grid === 'detached' ? '\n🔌 Мережа: <b>є, але інвертор відʼєднався</b> — обʼєкт живиться від батареї'
+      : '\n🔌 Мережа: <b>немає</b> — обʼєкт живиться від батареї';
 
     await sendMessage(chatId, `🔋 <b>${inverter.name}</b>
 

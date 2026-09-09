@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommand, createCommands, outageSummaryFlux } from './commands.js';
 import { OUTAGE_PANEL_ID } from './config.js';
-import { GRID_PRESENT_VOLTS } from './helpers.js';
+import { GRID_PRESENT_VOLTS, GRID_CURRENT_AMPS } from './helpers.js';
 import { createDb } from './db.js';
 import { decisionMessage } from './helpers.js';
 
@@ -425,7 +425,7 @@ test('/help не обіцяє аргумент там, де тепер клав�
 
 // --- Стан мережі в /status ---
 
-function statusHarness({ gridVoltage, gridFails = false } = {}) {
+function statusHarness({ gridVoltage, gridCurrent, gridFails = false } = {}) {
   const store = createDb(':memory:');
   store.upsertInverter('INV1', 'Клочківська 117', 'DASH');
   store.upsertUser(7, 'petro', 'Петро');
@@ -444,7 +444,12 @@ function statusHarness({ gridVoltage, gridFails = false } = {}) {
         if (flux.includes('"grid"')) {
           if (gridFails) throw new Error('Grafana 500 на запиті мережі');
           if (gridVoltage === undefined) return frame([], []);
-          return frame(['_time', 'voltage'], [[1788455061000], [gridVoltage]]);
+          // Запит бота пивотить поля в колонки, тож струм приходить тим самим
+          // кадром. У даних до 9 вер 2026 колонки current просто немає.
+          return gridCurrent === undefined
+            ? frame(['_time', 'voltage'], [[1788455061000], [gridVoltage]])
+            : frame(['_time', 'voltage', 'current'],
+                    [[1788455061000], [gridVoltage], [gridCurrent]]);
         }
         return frame(['_time', 'soc', 'power'], [[1788455061000], [98], [-405]]);
       },
@@ -468,6 +473,23 @@ test('/status каже, що живлення немає і обʼєкт на б
   await commands.get('/status')({ chatId: 7 });
   assert.match(sent[0], /немає/);
   assert.match(sent[0], /батаре/i);
+});
+
+test('/status розрізняє відʼєднання інвертора і справжній блекаут', async () => {
+  // Напруга в нормі, струм нуль — саме те, що сталося 29 і 30 сер 2026.
+  const { commands, sent } = statusHarness({ gridVoltage: 233.4, gridCurrent: 0 });
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /відʼєднався/);
+  assert.match(sent[0], /батаре/i);
+  assert.doesNotMatch(sent[0], /Мережа: <b>немає/,
+    'це не блекаут — напруга на вводі є');
+});
+
+test('/status при живому струмі каже просто «є»', async () => {
+  const { commands, sent } = statusHarness({ gridVoltage: 237.3, gridCurrent: 0.8 });
+  await commands.get('/status')({ chatId: 7 });
+  assert.match(sent[0], /Мережа: <b>є<\/b>/);
+  assert.doesNotMatch(sent[0], /відʼєднався/);
 });
 
 test('без даних мережі рядок просто відсутній — не «невідомо»', async () => {
@@ -641,6 +663,14 @@ test('outageSummaryFlux рахує за тим самим порогом, що �
   // Якщо поріг розійдеться з gridPresent, бот казатиме «мережа є» і водночас
   // рахуватиме цю саму хвилину як відключення.
   assert.match(outageSummaryFlux('INV1'), new RegExp(`< ${GRID_PRESENT_VOLTS}\\.0`));
+});
+
+test('outageSummaryFlux рахує і відʼєднання інвертора, не лише блекаут', () => {
+  // Інакше текст /outages суперечив би картинці, яку та сама команда шле:
+  // панель у Grafana рахує обидві ознаки з 9 вер 2026.
+  const flux = outageSummaryFlux('INV1');
+  assert.match(flux, /_field == "current"/);
+  assert.match(flux, new RegExp(`< ${GRID_CURRENT_AMPS}`));
 });
 
 test('outageSummaryFlux не рахує години, у яких не було жодної точки', () => {

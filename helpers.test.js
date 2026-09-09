@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridPresent, normalizeUsername, decisionMessage, objectRemoved, formatDuration, formatKyivDate, formatOutageSummary } from './helpers.js';
+import { fmt, renderSocBar, redact, escapeHtml, batteryState, gridState, normalizeUsername, decisionMessage, objectRemoved, formatDuration, formatKyivDate, formatOutageSummary } from './helpers.js';
 
 test('fmt повертає N/A для нечислового рядка, а не "NaN"', () => {
   assert.equal(fmt('abc'), 'N/A');
@@ -66,22 +66,42 @@ test('batteryState: без значення — нічого не вигадує
   assert.equal(batteryState('abc'), null);
 });
 
-test('gridPresent: 230 В — мережа є, нуль — немає', () => {
-  assert.equal(gridPresent(237.3), true);
-  assert.equal(gridPresent(0), false);
+test('gridState: напруга є і струм тече — мережа є', () => {
+  assert.equal(gridState({ voltage: 237.3, current: 0.8 }), 'present');
 });
 
-test('gridPresent: поріг той самий, що в правилі алерту', () => {
-  // Якби поріг тут і в Grafana розійшлись, бот казав би «мережа є», поки
-  // приходило б сповіщення про її зникнення.
-  assert.equal(gridPresent(49), false);
-  assert.equal(gridPresent(51), true);
+test('gridState: нуль напруги — блекаут', () => {
+  assert.equal(gridState({ voltage: 0, current: 0 }), 'blackout');
 });
 
-test('gridPresent: без даних — не вигадуємо відповідь', () => {
-  assert.equal(gridPresent(null), null);
-  assert.equal(gridPresent(undefined), null);
-  assert.equal(gridPresent('abc'), null);
+test('gridState: напруга в нормі, а струм нуль — інвертор на батареї', () => {
+  // Третій стан, якого раніше не було: 29 і 30 сер 2026 інвертор ішов на
+  // батарею при 233 і 242 В, і бот у ці хвилини казав би «мережа є».
+  assert.equal(gridState({ voltage: 233.4, current: 0 }), 'detached');
+});
+
+test('gridState: поріг напруги той самий, що в правилі алерту', () => {
+  assert.equal(gridState({ voltage: 49, current: 0.8 }), 'blackout');
+  assert.equal(gridState({ voltage: 51, current: 0.8 }), 'present');
+});
+
+test('gridState: поріг струму той самий, що в правилі алерту', () => {
+  assert.equal(gridState({ voltage: 240, current: 0.09 }), 'detached');
+  assert.equal(gridState({ voltage: 240, current: 0.11 }), 'present');
+});
+
+test('gridState: без виміряного струму не стверджуємо «на батареї»', () => {
+  // Дані до 9 вер 2026 струму не мають. Мовчазний нуль там означав би
+  // повідомлення про відʼєднання на кожен старий запис.
+  assert.equal(gridState({ voltage: 237.3 }), 'present');
+  assert.equal(gridState({ voltage: 237.3, current: null }), 'present');
+  assert.equal(gridState({ voltage: 237.3, current: 'abc' }), 'present');
+});
+
+test('gridState: без напруги — не вигадуємо відповідь', () => {
+  assert.equal(gridState({ voltage: null }), null);
+  assert.equal(gridState({}), null);
+  assert.equal(gridState({ voltage: 'abc' }), null);
 });
 
 test('normalizeUsername зрізає @ і зводить до нижнього регістру', () => {
