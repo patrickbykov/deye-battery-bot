@@ -24,8 +24,14 @@ const RANGES = {
 // змішувати їх означало б, що назва виміру бреше.
 const GRID_PHASES = ['GridVoltageL1', 'GridVoltageL2', 'GridVoltageL3'];
 
+// Струм — окремий і найнадійніший підпис відʼєднання від мережі: 29 і 30 сер
+// 2026 інвертор ішов на батарею при цілком нормальній напрузі 233 і 242 В,
+// і лише струм у ці моменти був рівно 0.00 A (див. docs/grafana-alerting.md).
+const GRID_CURRENT_PHASES = ['GridCurrentL1', 'GridCurrentL2', 'GridCurrentL3'];
+
 const GRID_RANGES = {
   voltage: [0, 500],
+  current: [0, 1000],
   frequency: [0, 100],
   power: [-100000, 100000],
 };
@@ -47,6 +53,16 @@ export function toGridPoint(deviceData) {
     frequency: Number(byKey.get('GridFrequency')),
     power: Number(byKey.get('TotalGridPower')),
   };
+
+  // За модулем: знак струму означає напрямок (імпорт чи віддача), а нас
+  // цікавить лише сам факт, що через увід тече струм. Поле додаємо тільки
+  // якщо пристрій його справді віддає — вигаданий нуль читався б як
+  // відʼєднання від мережі там, де струм просто не вимірюють.
+  const currents = GRID_CURRENT_PHASES
+    .map(key => Number(byKey.get(key)))
+    .filter(Number.isFinite)
+    .map(value => Math.abs(value));
+  if (currents.length > 0) fields.current = Math.max(...currents);
 
   for (const [field, value] of Object.entries(fields)) {
     if (!Number.isFinite(value)) {

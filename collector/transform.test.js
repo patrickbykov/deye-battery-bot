@@ -18,6 +18,9 @@ function deviceData(overrides = {}) {
       { key: 'GridVoltageL1', value: '237.30', unit: 'V' },
       { key: 'GridVoltageL2', value: '234.00', unit: 'V' },
       { key: 'GridVoltageL3', value: '238.30', unit: 'V' },
+      { key: 'GridCurrentL1', value: '0.87', unit: 'A' },
+      { key: 'GridCurrentL2', value: '0.74', unit: 'A' },
+      { key: 'GridCurrentL3', value: '0.76', unit: 'A' },
       { key: 'GridFrequency', value: '50.00', unit: 'Hz' },
       { key: 'TotalGridPower', value: '248', unit: 'W' },
     ],
@@ -118,6 +121,34 @@ test('зникнення мережі дає нуль напруги', () => {
   dead.dataList = dead.dataList.map(d =>
     d.key.startsWith('GridVoltage') ? { ...d, value: '0.00' } : d);
   assert.equal(toGridPoint(dead).fields.voltage, 0);
+});
+
+test('струм мережі — максимум по фазах', () => {
+  assert.equal(toGridPoint(deviceData()).fields.current, 0.87);
+});
+
+test('відʼємний струм при експорті читається за модулем, а не як менший', () => {
+  // Знак означає напрямок; нам важлива лише наявність струму взагалі.
+  const exporting = deviceData();
+  exporting.dataList = exporting.dataList.map(d =>
+    d.key === 'GridCurrentL1' ? { ...d, value: '-3.20' } : d);
+  assert.equal(toGridPoint(exporting).fields.current, 3.2);
+});
+
+test('нульовий струм на всіх фазах лишається нулем, а не зникає', () => {
+  // Це і є підпис відʼєднання від мережі — поле мусить доїхати як 0.
+  const detached = deviceData();
+  detached.dataList = detached.dataList.map(d =>
+    d.key.startsWith('GridCurrent') ? { ...d, value: '0.00' } : d);
+  assert.equal(toGridPoint(detached).fields.current, 0);
+});
+
+test('без ключів струму поля current немає — вигаданий нуль означав би відʼєднання', () => {
+  const noCurrent = deviceData();
+  noCurrent.dataList = noCurrent.dataList.filter(d => !d.key.startsWith('GridCurrent'));
+  const fields = toGridPoint(noCurrent).fields;
+  assert.equal('current' in fields, false);
+  assert.equal(fields.voltage, 238.3);
 });
 
 test('обʼєкт без даних мережі не дає точки', () => {

@@ -13,6 +13,23 @@
 означає «даних немає», а не «світло було»: це різні відповіді, і плутати
 їх не можна.
 
+**Мережі немає — це дві різні ознаки** (з 9 вер 2026):
+
+| Ознака | Що це | Напруга в цей момент |
+|---|---|---|
+| `voltage` нижче 50 В | блекаут, живлення зникло на вводі | 0 |
+| `current` нижче 0.1 A | інвертор відʼєднався сам | ~240 В, нормальна |
+
+`max()` по хвилині означає **АБО**: досить однієї ознаки, щоб хвилина
+зарахувалась. Другу ознаку знайшли через сповіщення застосунку Deye
+29 сер 2026 — подробиці в `grafana-alerting.md`, правило 5.
+
+**Історію це не переписує.** Поле `current` зʼявилось у бакеті лише 9 вер
+2026, тож усе, що раніше, теплокарта й далі рахує лише по напрузі. Дві
+відомі події (29 і 30 сер) на ній не зʼявляться — їх просто немає в наших
+даних. Рахунок наявності годин (`points`) навмисно лишився на напрузі: на
+струмі він викинув би всю історію до 9 вересня.
+
 ## Запит
 
 ```flux
@@ -23,18 +40,26 @@ option location = timezone.location(name: "Europe/Kyiv")
 
 base = from(bucket: "monitoring")
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "grid" and r._field == "voltage")
-  |> filter(fn: (r) => r.inverter == "${inverter}")
+  |> filter(fn: (r) => r._measurement == "grid" and r.inverter == "${inverter}")
 
 points = base
+  |> filter(fn: (r) => r._field == "voltage")
   |> aggregateWindow(every: 1h, fn: count, timeSrc: "_start", createEmpty: true)
   |> keep(columns: ["_time", "_value"])
   |> rename(columns: {_value: "points"})
 
 minutes = base
+  |> filter(fn: (r) => r._field == "voltage" or r._field == "current")
   |> aggregateWindow(every: 1m, fn: last, timeSrc: "_start", createEmpty: true)
   |> fill(column: "_value", usePrevious: true)
-  |> map(fn: (r) => ({ r with _value: if exists r._value and r._value < 50.0 then 1.0 else 0.0 }))
+  |> map(fn: (r) => ({ r with _value:
+       if not exists r._value then 0.0
+       else if r._field == "voltage" then (if r._value < 50.0 then 1.0 else 0.0)
+       else (if r._value < 0.1 then 1.0 else 0.0) }))
+  |> group(columns: ["_time"])
+  |> max()
+  |> group()
+  |> sort(columns: ["_time"])
   |> aggregateWindow(every: 1h, fn: sum, timeSrc: "_start", createEmpty: true)
   |> keep(columns: ["_time", "_value"])
   |> rename(columns: {_value: "minutes"})
