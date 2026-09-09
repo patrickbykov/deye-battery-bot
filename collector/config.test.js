@@ -17,11 +17,28 @@ test('називає всі відсутні змінні одразу, а не 
 test('підставляє дефолти для необов язкових', () => {
   const cfg = loadConfig(complete);
   assert.equal(cfg.influx.bucket, 'monitoring');
-  assert.equal(cfg.collectIntervalMs, 300_000);
+  assert.equal(cfg.collectIntervalMs, 90_000);
   assert.equal(cfg.deye.baseUrl, 'https://eu1-developer.deyecloud.com/v1.0');
 });
 
 test('не тримає секрети в перелічуваному вигляді для логів', () => {
   const cfg = loadConfig(complete);
   assert.doesNotMatch(JSON.stringify(cfg), /"S"|"p"|"T"/);
+});
+
+test('відхиляє інтервал, коротший за поріг безпеки для Deye API', () => {
+  assert.throws(
+    () => loadConfig({ ...complete, COLLECT_INTERVAL: '5000' }),
+    /COLLECT_INTERVAL/
+  );
+});
+
+test('ліміт несвіжості не тісніший за 15 хв навіть на коротких інтервалах', () => {
+  const cfg = loadConfig({ ...complete, COLLECT_INTERVAL: '90000' });
+  assert.equal(cfg.stalenessLimitMs, 900_000);
+});
+
+test('на довгих інтервалах ліміт несвіжості росте разом з ними', () => {
+  const cfg = loadConfig({ ...complete, COLLECT_INTERVAL: '600000' });
+  assert.equal(cfg.stalenessLimitMs, 1_800_000);
 });

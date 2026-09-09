@@ -106,6 +106,7 @@
 | `deye.js` | кеш токена, проактивний і реактивний ре-логін, пагінація, ретраї |
 | `influx.js` | запис line protocol; ретраїть 5xx, не ретраїть 4xx |
 | `retry.js` | експоненційний backoff із `shouldRetry` |
+| `schedule.js` | пауза наступного циклу: рівний інтервал або відступ після збоїв |
 | `config.js` | env з валідацією |
 | `collector.js` | цикл: discovery → latest → валідація → дедуп → запис |
 | `index.js` | вхід і health-check, який **не бреше** |

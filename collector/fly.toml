@@ -7,7 +7,7 @@ primary_region = 'fra'
 
 [env]
   PORT = '8080'
-  COLLECT_INTERVAL = '300000'
+  COLLECT_INTERVAL = '90000'
   INFLUX_BUCKET = 'monitoring'
 
 # Публічного HTTP колектору не треба, але health-check потрібен: він єдиний
