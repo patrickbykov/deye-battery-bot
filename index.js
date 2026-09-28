@@ -5,12 +5,14 @@ import { parseCommand, createCommands, createCallbacks } from './commands.js';
 import { parseCallback } from './subs-keyboard.js';
 import { webhookAuthorized, parseGrafanaWebhook } from './webhook-grafana.js';
 import { createAlertQueue } from './alerts-queue.js';
+import { createPauseControl, parsePauseArg, pauseMenu } from './pause.js';
+import { USER_MENU, ADMIN_MENU } from './menu.js';
 import { createAdminRoutes } from './admin-routes.js';
 import { createBackup, createWeeklyExport, createDeploySnapshot, BACKUP_INTERVAL_MS } from './backup.js';
 import { throttleDecision } from './admin-auth.js';
 import path from 'node:path';
 import { healthStatus } from './health.js';
-import { redact, escapeHtml, objectRemoved } from './helpers.js';
+import { redact, escapeHtml, objectRemoved, formatKyivTime } from './helpers.js';
 import { createHttpServer, readBody } from './http-server.js';
 import { createDb, DEFAULT_DB_PATH } from './db.js';
 import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
@@ -41,12 +43,58 @@ const callbacks = createCallbacks({
   adminChatId: ADMIN_CHAT_ID,
 });
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// sendAlert, а не sendMessage: оголошення йде тим самим людям, що й алерти, і
+// йому так само треба бачити 403 від того, хто видалив бота.
+const pauseControl = createPauseControl({ store, send: sendAlert, sleep, log: console });
+
 const alertQueue = createAlertQueue({
   store,
   send: sendAlert,
   log: console,
-  sleep: ms => new Promise(r => setTimeout(r, ms)),
+  sleep,
   adminChatId: ADMIN_CHAT_ID,
+  isPaused: pauseControl.isActive,
+});
+
+const PAUSE_TICK_MS = 60_000;
+
+// Спільне для команди й кнопок: однакова дія має однаково звітувати.
+async function applyPause(parsed) {
+  const { announced, updated } = await pauseControl.pause({ ...parsed, by: 'telegram' });
+  return (updated ? '⏸ Паузу оновлено' : `⏸ Сповіщення на паузі. Повідомлено: ${announced}`) +
+    (parsed.reason ? `\nПричина: ${escapeHtml(parsed.reason)}` : '') +
+    (parsed.until ? `\nДо ${formatKyivTime(parsed.until)}, далі відновляться самі.` : '\nЗняти: /resume') +
+    '\nВи й надалі отримуєте всі алерти з позначкою паузи.';
+}
+
+async function applyResume() {
+  const { wasPaused, announced } = await pauseControl.resume();
+  return wasPaused ? `▶️ Сповіщення відновлено. Повідомлено: ${announced}` : 'Сповіщення й так не на паузі.';
+}
+
+// Кнопки меню /pause. Перевірка адміна тут, а не лише при показі кнопок:
+// callback_data може надіслати будь-хто, хто вгадає формат.
+callbacks.set('p', async ({ chatId, messageId, callbackId, from, value }) => {
+  if (ADMIN_CHAT_ID === null || from?.id !== ADMIN_CHAT_ID) {
+    await answerCallbackQuery(callbackId);
+    return;
+  }
+  // Спершу відповідь на тап: розсилка триває секунди, а Telegram тим часом
+  // крутить на кнопці годинник.
+  await answerCallbackQuery(callbackId);
+  if (value === 'cancel') {
+    await editMessageText(chatId, messageId, 'Без змін.');
+  } else if (value === 'resume') {
+    await editMessageText(chatId, messageId, await applyResume());
+  } else {
+    const parsed = parsePauseArg(value === 'inf' ? '' : value, Date.now());
+    // Невідоме значення стало б безстроковою паузою з причиною «5x» —
+    // з кнопки такого прийти не може, тож і діяти не будемо.
+    if (!parsed || (value !== 'inf' && !parsed.until)) return;
+    await editMessageText(chatId, messageId, await applyPause(parsed));
+  }
 });
 
 // Адмінські команди — окрема мапа. Не-адміну вони відповідають так само, як
@@ -76,6 +124,24 @@ const adminCommands = new Map([
     const dump = Buffer.from(JSON.stringify(store.exportAll(), null, 2));
     await sendDocument(chatId, dump, `deye-backup-${new Date().toISOString().slice(0, 10)}.json`,
       '💾 Дамп користувачів, підписок і об’єктів');
+  }],
+  ['/pause', async ({ chatId, arg }) => {
+    // Гола /pause — це тап по пункту меню. Показуємо стан і кнопки, а не
+    // ставимо паузу: випадковий тап розіслав би оголошення всім.
+    if (!arg) {
+      const { text, reply_markup } = pauseMenu(pauseControl.current(), Date.now());
+      await sendMessage(chatId, text, { reply_markup });
+      return;
+    }
+    const parsed = parsePauseArg(arg, Date.now());
+    if (!parsed) {
+      await sendMessage(chatId, '❌ Тривалість має бути більшою за нуль, напр. <code>/pause 2h планові роботи</code>.');
+      return;
+    }
+    await sendMessage(chatId, await applyPause(parsed));
+  }],
+  ['/resume', async ({ chatId }) => {
+    await sendMessage(chatId, await applyResume());
   }],
   ['/users', async ({ chatId }) => {
     const users = store.listUsersWithSubscriptions();
@@ -286,26 +352,16 @@ async function main() {
 
   try {
     await fetch(`${TG_API}/getUpdates?offset=-1`);
-    await fetch(`${TG_API}/setMyCommands`, {
+    const setCommands = body => fetch(`${TG_API}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        // Щоденне — зверху. Telegram показує цей список у тому порядку,
-        // у якому його надіслано, тож /status і /graph мають бути першими:
-        // підписку налаштовують раз, а стан дивляться постійно.
-        commands: [
-          { command: 'status', description: '🔋 Поточний стан' },
-          { command: 'graph', description: '📊 Графік за 24 години' },
-          { command: 'outages', description: '⚡ Скільки не було світла' },
-          { command: 'list', description: '📋 Доступні об’єкти' },
-          { command: 'subscribe', description: '➕ Обрати об’єкти' },
-          { command: 'mysubs', description: '📌 Мої підписки' },
-          { command: 'unsubscribe', description: '➖ Відписатись' },
-          { command: 'forgetme', description: '🗑 Видалити мої дані' },
-          { command: 'help', description: 'ℹ️ Список команд' }
-        ]
-      })
+      body: JSON.stringify(body),
     });
+    await setCommands({ commands: USER_MENU });
+    // Адмін бачить власне меню з паузою; решта — лише користувацьке.
+    if (ADMIN_CHAT_ID) {
+      await setCommands({ commands: ADMIN_MENU, scope: { type: 'chat', chat_id: ADMIN_CHAT_ID } });
+    }
   } catch (err) {
     // Раніше виняток тут виносило в main().catch(), polling не стартував,
     // а HTTP-сервер тримав процес живим і далі рапортував 200.
@@ -338,6 +394,15 @@ async function main() {
     sendDocument, chatId: ADMIN_CHAT_ID, log: console,
   });
   weeklyExport.runIfDue();
+
+  // Окремий тик, бо строк паузи — хвилини й години, а добовий тик для нього
+  // задовгий. Після рестарту пауза, що скінчилась, поки процес лежав,
+  // знімається першим же тиком.
+  setInterval(() => {
+    pauseControl.tick()
+      .then(r => r.resumed && notifyAdmin('▶️ Строк паузи вийшов — сповіщення відновлено.'))
+      .catch(err => console.error('Пауза:', redact(err.message)));
+  }, PAUSE_TICK_MS).unref();
 
   setInterval(() => {
     backup.runOnce();

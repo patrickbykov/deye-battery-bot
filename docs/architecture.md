@@ -95,6 +95,8 @@
 | `webhook-grafana.js` | `webhookAuthorized`, `parseGrafanaWebhook`, `dedupKey` |
 | `alerts-fanout.js` | `selectRecipients`, `formatAlert` — кому слати і який текст |
 | `alerts-queue.js` | послідовна відправка, пауза, дедуп, 429/403 |
+| `pause.js` | пауза сповіщень адміном: розбір `/pause`, кнопки меню, оголошення людям, авто-відновлення за строком |
+| `menu.js` | меню команд Telegram: типове й окреме для адміна |
 | `subs-keyboard.js` | клавіатура вибору обʼєктів, розбір `callback_data` |
 | `backup.js` | `VACUUM INTO` раз на добу з ротацією на 7 копій; щотижневий дамп у чат адміна за маркером на волюмі; знімок перед зміною версії у `shutdown` |
 

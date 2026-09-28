@@ -9,7 +9,11 @@ const MAX_RECIPIENTS = 100;
 // але пропускає навмисні повтори по repeat_interval (типово 4 год).
 const DEDUP_WINDOW_MS = 15 * 60_000;
 
-export function createAlertQueue({ store, send, log, sleep, adminChatId = null }) {
+// Позначка для адміна: під час паузи він отримує алерт один, і має бачити,
+// що підписникам цей текст не пішов.
+const PAUSED_PREFIX = '⏸ <i>Пауза сповіщень — підписникам не надіслано</i>\n\n';
+
+export function createAlertQueue({ store, send, log, sleep, adminChatId = null, isPaused = () => false }) {
   async function deliverOne(chatId, text, key) {
     // Дедуп на пару (алерт, адресат): різні люди підписані на різне.
     if (store.wasDelivered(key, chatId, DEDUP_WINDOW_MS)) return false;
@@ -41,6 +45,9 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null }
   }
 
   async function deliver(alerts) {
+    // Одне читання на вебхук: пауза, знята посеред розсилки, не мусить
+    // розрізати один алерт на «комусь пішов, комусь ні».
+    const paused = isPaused();
     for (const alert of alerts) {
       const inverter = alert.inverterId ? store.getInverter(alert.inverterId) : null;
       const { chatIds, reason } = selectRecipients({
@@ -54,11 +61,17 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null }
         log.warn(`Алерт «${alert.alertname}» без адресації по інверторах: ${reason}`);
       }
 
-      const text = formatAlert(alert, inverter?.name);
+      // Адмін лишається на звʼязку: пауза глушить людей, а не моніторинг.
+      // Алерт, пропущений підписниками, повториться після паузи з наступним
+      // repeat_interval Grafana, якщо проблема ще триває.
+      const recipients = paused ? chatIds.filter(id => id === adminChatId) : chatIds;
+      if (paused) log.info(`Пауза: алерт «${alert.alertname}» підписникам не надіслано`);
+
+      const text = (paused ? PAUSED_PREFIX : '') + formatAlert(alert, inverter?.name);
       const key = dedupKey(alert);
-      const targets = chatIds.slice(0, MAX_RECIPIENTS);
-      if (chatIds.length > MAX_RECIPIENTS) {
-        log.error(`Адресатів ${chatIds.length}, обрізано до ${MAX_RECIPIENTS}`);
+      const targets = recipients.slice(0, MAX_RECIPIENTS);
+      if (recipients.length > MAX_RECIPIENTS) {
+        log.error(`Адресатів ${recipients.length}, обрізано до ${MAX_RECIPIENTS}`);
       }
 
       let delivered = 0;

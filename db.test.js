@@ -9,7 +9,7 @@ const tables = db => db.prepare(
 
 test('створює схему на порожній БД і ставить версію', () => {
   const store = createDb(':memory:');
-  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'ignored_inverters', 'inverters', 'invited', 'subscriptions', 'users']);
+  assert.deepEqual(tables(store.raw), ['alert_deliveries', 'alert_pause', 'ignored_inverters', 'inverters', 'invited', 'subscriptions', 'users']);
   assert.equal(store.raw.pragma('user_version', { simple: true }), SCHEMA_VERSION);
 });
 

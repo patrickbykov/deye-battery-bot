@@ -71,3 +71,23 @@ test('невідомий інвертор без адміна нікому не 
   await queue.deliver([alert({ inverterId: null })]);
   assert.equal(sent.length, 0);
 });
+
+test('на паузі підписникам не шле, адміну — з позначкою', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(1, 'u1', 'U1');
+  store.replaceSubscriptions(1, ['INV1']);
+  store.setUserStatus(1, 'approved', 'test');
+  const sent = [];
+  const queue = createAlertQueue({
+    store,
+    send: async (chatId, text) => { sent.push({ chatId, text }); return { ok: true }; },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: async () => {},
+    adminChatId: 99,
+    isPaused: () => true,
+  });
+  await queue.deliver([alert()]);
+  assert.deepEqual(sent.map(s => s.chatId), [99]);
+  assert.match(sent[0].text, /пауз/i);
+});

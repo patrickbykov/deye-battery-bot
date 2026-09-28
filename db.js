@@ -8,7 +8,7 @@ export const DEFAULT_DB_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)), 'data', 'bot.db'
 );
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // strftime з явним 'Z', а не datetime('now'). Останній віддає
 // '2026-09-03 12:00:00' — без зони й без 'T', і new Date() читає такий рядок
@@ -78,6 +78,19 @@ const SCHEMA_V3 = `
   );
 `;
 
+// Пауза сповіщень на час планових робіт або збою Grafana/Deye Cloud. Один
+// рядок (CHECK id = 1), а не прапорець у памʼяті: деплой посеред робіт —
+// звичайна річ, і рестарт не мусить мовчки знімати паузу.
+const SCHEMA_V4 = `
+  CREATE TABLE IF NOT EXISTS alert_pause (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    reason    TEXT,
+    until     TEXT,
+    paused_by TEXT,
+    paused_at TEXT NOT NULL DEFAULT (${NOW})
+  );
+`;
+
 export function migrate(db) {
   const current = db.pragma('user_version', { simple: true });
   if (current === SCHEMA_VERSION) return;
@@ -91,6 +104,7 @@ export function migrate(db) {
     }
     if (current <= 1) db.exec(SCHEMA_V2);
     if (current <= 2) db.exec(SCHEMA_V3);
+    if (current <= 3) db.exec(SCHEMA_V4);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -182,6 +196,28 @@ export function createDb(filename) {
       if (clean === '') return undefined;
       return db.prepare('DELETE FROM invited WHERE username = lower(?) RETURNING *').get(clean);
     },
+
+    // --- Пауза сповіщень ---
+    // Сховище не вирішує, чи пауза ще діє: строк порівнюється з годинником
+    // у pause.js, щоб у тестах час був керованим.
+    getPause: () =>
+      db.prepare('SELECT * FROM alert_pause WHERE id = 1').get(),
+
+    setPause: ({ reason = null, until = null, by = null }) =>
+      db.prepare(`
+        INSERT INTO alert_pause (id, reason, until, paused_by) VALUES (1, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, until = excluded.until,
+                                      paused_by = excluded.paused_by
+      `).run(reason, until, by),
+
+    // RETURNING: хто зняв паузу, той і дізнається, якою вона була, — без
+    // проміжку між читанням і видаленням.
+    clearPause: () =>
+      db.prepare('DELETE FROM alert_pause WHERE id = 1 RETURNING *').get(),
+
+    getApprovedChatIds: () =>
+      db.prepare("SELECT chat_id FROM users WHERE status = 'approved' ORDER BY chat_id")
+        .all().map(r => r.chat_id),
 
     // --- Доставка алертів ---
     // Вікно, а не вічний ключ: Grafana повторює сповіщення для алерту, що

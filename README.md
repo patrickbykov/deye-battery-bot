@@ -52,6 +52,7 @@
 | `/status`, `/graph`, `/outages` | лише схвалені |
 | `/forgetme` | усі — видалити свій запис (з підтвердженням) |
 | `/users`, `/remove_inverter <id>`, `/export` | лише `ADMIN_CHAT_ID` |
+| `/pause [2h] [причина]`, `/resume` | лише `ADMIN_CHAT_ID` — пауза сповіщень для всіх |
 
 ## Локальний запуск
 
