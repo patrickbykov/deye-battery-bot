@@ -14,10 +14,7 @@
 ```bash
 npm install
 cp .env.example .env                 # заповнити
-node --env-file=.env index.js        # Node 20+
-
-cd collector && cp .env.example .env
-node --env-file=.env index.js
+node --env-file=.env index.js        # Node 22 (better-sqlite3); стартує й колектор
 ```
 
 Тести — без залежностей і без мережі:

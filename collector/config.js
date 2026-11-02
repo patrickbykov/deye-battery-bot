@@ -61,6 +61,5 @@ export function loadConfig(env = process.env) {
     }),
     collectIntervalMs,
     stalenessLimitMs: Math.max(3 * collectIntervalMs, MIN_STALENESS_LIMIT_MS),
-    port: Number(env.PORT || 8080),
   };
 }
