@@ -5,6 +5,11 @@ primary_region = 'fra'
 
 [build]
 
+# Колектор тепер у процесі бота (collector/). Секрети DEYE_*/INFLUX_* — через fly secrets.
+[env]
+  COLLECT_INTERVAL = '90000'
+  INFLUX_BUCKET = 'monitoring'
+
 [http_service]
   internal_port = 8080
   force_https = true

@@ -57,9 +57,11 @@ export function createHttpServer({ getHealth, routes, log }) {
     // має отримати відповідь навіть якщо решта застосунку зламана: провалений
     // check рестартить єдину машину, а рестарт нічого не лікує.
     if (pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
-      const { healthy, ageMs } = getHealth();
+      const { healthy, ageMs, reason } = getHealth();
       const text = healthy
         ? `OK (останній полінг ${Math.round(ageMs / 1000)}с тому)`
+        // reason — коли став не полінг, а щось інше (колектор)
+        : reason ? `STALE (${reason})`
         : `STALE (${ageMs === null ? 'полінгу ще не було' : Math.round(ageMs / 1000) + 'с без відповіді Telegram'})`;
       return respond(res, healthy ? 200 : 503, 'text/plain; charset=utf-8', text);
     }

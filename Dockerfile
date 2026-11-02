@@ -11,6 +11,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY *.js ./
+COPY collector/*.js ./collector/
 
 # Каталог під SQLite: у проді сюди монтується волюм, локально — звичайна тека.
 RUN mkdir -p /app/data && chown -R node:node /app/data

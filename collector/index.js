@@ -1,39 +1,26 @@
-import http from 'node:http';
 import { loadConfig } from './config.js';
 import { createDeyeClient } from './deye.js';
 import { createInfluxWriter } from './influx.js';
 import { createCollector } from './collector.js';
 import { nextDelayMs } from './schedule.js';
 
-const log = {
+const defaultLog = {
   info: msg => console.log(`[collector] ${msg}`),
   warn: msg => console.warn(`[collector] ${msg}`),
   error: msg => console.error(`[collector] ${msg}`),
 };
 
-function main() {
-  const config = loadConfig();
+// Колектор живе в процесі бота: дві Node-машини не влазять у 256MB, а дві
+// машини Fly — це рахунок понад $5. Власного HTTP більше немає — несвіжість
+// циклу бот віддає у свій health-check через повернуті lastSuccessAt/stalenessLimitMs.
+// `collector` — лише для тестів.
+export function startCollector({ env = process.env, log = defaultLog, collector } = {}) {
+  const config = loadConfig(env);
 
-  const collector = createCollector({
+  collector ??= createCollector({
     deye: createDeyeClient(config.deye),
     influx: createInfluxWriter(config.influx),
     log,
-  });
-
-  // Health-check, який каже правду. У бота він віддає 200 безумовно і сервер
-  // стоїть поза головним циклом — тому мертвий бот пів року рапортував OK.
-  // Тут 200 означає «цикл справді відпрацював нещодавно».
-  http.createServer((req, res) => {
-    const last = collector.lastSuccessAt();
-    const ageMs = last === null ? Infinity : Date.now() - last;
-    const healthy = ageMs < config.stalenessLimitMs;
-
-    res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'text/plain' });
-    res.end(healthy
-      ? `OK (останній цикл ${Math.round(ageMs / 1000)}с тому)`
-      : `STALE (останній успішний цикл ${last === null ? 'ще не був' : Math.round(ageMs / 1000) + 'с тому'})`);
-  }).listen(config.port, '0.0.0.0', () => {
-    log.info(`Health-check на порту ${config.port}`);
   });
 
   log.info(`Старт. Інтервал ${config.collectIntervalMs / 1000}с, бакет ${config.influx.bucket}`);
@@ -63,6 +50,6 @@ function main() {
   };
 
   tick();
-}
 
-main();
+  return { lastSuccessAt: collector.lastSuccessAt, stalenessLimitMs: config.stalenessLimitMs };
+}

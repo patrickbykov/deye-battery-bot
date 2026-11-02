@@ -17,6 +17,7 @@ import { createHttpServer, readBody } from './http-server.js';
 import { createDb, DEFAULT_DB_PATH } from './db.js';
 import { createDiscovery, DISCOVERY_INTERVAL_MS } from './discovery.js';
 import { queryGrafana, renderGrafanaPanel, getDashboardLink } from './grafana.js';
+import { startCollector } from './collector/index.js';
 
 const store = createDb(DEFAULT_DB_PATH);
 
@@ -318,8 +319,21 @@ const routes = [
   },
 ];
 
+// Колектор у тому ж процесі (окрема машина коштувала понад $5/міс). Без
+// секретів DEYE_*/INFLUX_* бот не стартує — краще гучно, ніж тихо без даних.
+const collector = startCollector();
+
 createHttpServer({
-  getHealth: () => healthStatus(lastPollSuccessAt, STALENESS_LIMIT_MS, Date.now()),
+  getHealth: () => {
+    const now = Date.now();
+    const poll = healthStatus(lastPollSuccessAt, STALENESS_LIMIT_MS, now);
+    const collect = healthStatus(collector.lastSuccessAt(), collector.stalenessLimitMs, now);
+    if (!poll.healthy || collect.healthy) return poll;
+    return {
+      healthy: false,
+      reason: `колектор: ${collect.ageMs === null ? 'циклу ще не було' : Math.round(collect.ageMs / 1000) + 'с без успішного циклу'}`,
+    };
+  },
   routes,
   log: console,
 }).listen(PORT, '0.0.0.0', () => {

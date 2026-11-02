@@ -12,8 +12,8 @@
    Deye Cloud OpenAPI
         │  station/listWithDevice → device/latest
         ▼
-   deye-collector ──── line protocol ────▶ InfluxDB Cloud Serverless
-   (Fly, stateless)                        bucket monitoring, retention 30 днів
+   колектор ────────── line protocol ────▶ InfluxDB Cloud Serverless
+   (у процесі бота)                        bucket monitoring, retention 30 днів
                                                 │
                                                 │ Flux через проксі Grafana
                                                 ▼
@@ -102,7 +102,7 @@
 
 ## Модулі колектора
 
-Окремий застосунок, власні `package.json`, `Dockerfile`, `fly.toml`.
+Тека `collector/` у тому ж образі, що й бот. `index.js` експортує `startCollector()`: бот викликає його при старті й бере `lastSuccessAt`/`stalenessLimitMs` у свій health-check. Власних `package.json`, `Dockerfile`, `fly.toml` і HTTP-сервера більше немає (до лист. 2026 це був окремий застосунок `deye-collector`).
 
 | Файл | Відповідальність |
 |---|---|

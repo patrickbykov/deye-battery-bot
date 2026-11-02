@@ -3,7 +3,7 @@
 .idea
 .claude
 docs
-collector
+collector/*.test.js
 data
 node_modules
 *.test.js

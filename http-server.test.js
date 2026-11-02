@@ -26,6 +26,14 @@ test('health віддає 503, коли цикл став', async () => {
   });
 });
 
+test('health показує причину, коли став не полінг', async () => {
+  await withServer({ health: { healthy: false, reason: 'колектор: циклу ще не було' } }, async base => {
+    const res = await fetch(base + '/');
+    assert.equal(res.status, 503);
+    assert.equal(await res.text(), 'STALE (колектор: циклу ще не було)');
+  });
+});
+
 test('невідомий шлях → 404, а не health', async () => {
   await withServer({}, async base => {
     assert.equal((await fetch(base + '/nope')).status, 404);

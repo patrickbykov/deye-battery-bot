@@ -6,7 +6,8 @@
 
 - **Автодеплою немає.** Кожна зміна — `fly deploy` руками.
 - **Масштабувати понад одну машину не можна** (звідси `--ha=false` скрізь).
-- Два застосунки: `deye-battery-bot` і `deye-collector`.
+- Один застосунок `deye-battery-bot`; колектор крутиться в тому ж процесі (до лист. 2026 був окремий `deye-collector`).
+- Health-check `/` віддає 503, коли став полінг Telegram **або** колектор (>15 хв без успішного циклу).
 
 ## Локальний запуск
 
@@ -22,14 +23,13 @@ node --env-file=.env index.js
 Тести — без залежностей і без мережі:
 
 ```bash
-npm test        # 327 тестів, бот і колектор разом
+npm test        # бот і колектор разом; better-sqlite3 потребує Node 22 (як в образі)
 ```
 
 ## Деплой
 
 ```bash
-fly deploy --ha=false                       # бот
-fly deploy ./collector --ha=false           # колектор
+fly deploy --ha=false                       # бот разом із колектором
 ```
 
 Перевірити після:
@@ -61,8 +61,8 @@ fly secrets set ІМʼЯ=значення -a deye-battery-bot     # рестар
 | `INFLUXDB_BUCKET` | бот | токена Influx боту не треба — ходить через проксі Grafana |
 | `ADMIN_PASSWORD_HASH` | бот | **хеш**, не пароль |
 | `GRAFANA_WEBHOOK_TOKEN` | бот | спільний з contact point у Grafana |
-| `DEYE_*` | колектор | `DEYE_PASSWORD` — сирий пароль, хешує код |
-| `INFLUX_URL`, `INFLUX_ORG`, `INFLUX_TOKEN` | колектор | токен лише на **запис**, не All Access |
+| `DEYE_*` | бот (колектор) | `DEYE_PASSWORD` — сирий пароль, хешує код |
+| `INFLUX_URL`, `INFLUX_ORG`, `INFLUX_TOKEN` | бот (колектор) | токен лише на **запис**, не All Access |
 
 ### Пароль до адмінки
 
@@ -178,7 +178,7 @@ fly apps restart deye-battery-bot
 
 ```bash
 fly logs -a deye-battery-bot --no-tail | tail -40
-fly logs -a deye-collector --no-tail | tail -20
+fly logs -a deye-battery-bot --no-tail | grep '\[collector\]' | tail -20
 fly status -a deye-battery-bot
 ```
 
@@ -201,7 +201,7 @@ fly ssh console -a deye-battery-bot -C 'node -e "const D=require(\"better-sqlite
 |---|---|
 | Бот мовчить, health 200 | `409 Conflict`: живі два інстанси. `fly scale count 1` |
 | Бот мовчить, health 503 | полінг стоїть; вотчдог перезапустить за 10 хв |
-| `/status` каже «немає даних» | став колектор. Дивитись `fly logs -a deye-collector` |
+| `/status` каже «немає даних» | став колектор. Дивитись `fly logs -a deye-battery-bot | grep collector` |
 | Алерти не доходять | токен вебхука розійшовся між Fly і Grafana → у Grafana буде помилка доставки |
 | Алерт дійшов адміну, але не підписникам | у правила немає мітки `inverter` — це задумано для глобального правила застою |
 | Повідомлення обірване або не прийшло | `<` чи `>` у тексті алерту ламає розбір HTML у Telegram |
