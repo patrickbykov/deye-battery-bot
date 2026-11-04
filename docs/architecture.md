@@ -189,7 +189,7 @@ invited(username PK, note, invited_at)                                  -- за�
 | POST | `/hooks/grafana` | `Authorization: Bearer`, тіло ≤ 256 КБ |
 | GET | `/admin` | — форма логіну |
 | POST | `/admin/login` | тротлінг |
-| GET | `/admin/users`, `/admin/objects` | сесійна cookie |
+| GET | `/admin/users` (`?q=` — пошук за ніком, імʼям, ID, назвою обʼєкта), `/admin/objects` | сесійна cookie |
 | POST | `/admin/users`, `/admin/inverters`, `/admin/invites`, `/admin/objects/delete`, `/admin/logout` | cookie + CSRF |
 | GET | `/admin/export.json` | cookie |
 | — | решта | 404; відомий шлях з іншим методом → 405 |

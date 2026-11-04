@@ -103,6 +103,7 @@ export function createAdminRoutes({
         users: store.listUsersWithSubscriptions(),
         invited: store.listInvited(),
         csrf: csrfToken(s.sid, keys.csrf),
+        query: new URL(req.url, 'http://x').searchParams.get('q') ?? '',
       }));
     }) },
 

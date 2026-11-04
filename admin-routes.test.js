@@ -43,7 +43,16 @@ function harness({ notifyFails = false } = {}) {
     return res;
   }
 
-  return { store, post, csrf, notified, errors };
+  async function get(path) {
+    const req = { method: 'GET', url: path, headers: { cookie: `deye_admin=${cookie}` }, socket: { remoteAddress: '127.0.0.1' } };
+    const res = { statusCode: null, headers: null, body: '',
+      writeHead(status, headers) { this.statusCode = status; this.headers = headers; },
+      end(chunk) { this.body = chunk ?? ''; } };
+    await route('GET', path.split('?')[0]).handler(req, res, {});
+    return res;
+  }
+
+  return { store, post, get, csrf, notified, errors };
 }
 
 test('запрошує нік і нормалізує його', () => {
@@ -274,4 +283,14 @@ test('без сесії маршрут видалення веде на форм
   await routes.find(r => r.path === '/admin/objects/delete').handler(req, res, {});
   assert.equal(res.statusCode, 303);
   assert.ok(store.getInverter('INV1'));
+});
+
+test('GET /admin/users?q= показує лише збіги', async () => {
+  const h = harness();
+  h.store.upsertUser(42, 'petro', 'Петро');
+  h.store.upsertUser(43, 'olena', 'Олена');
+  const res = await h.get('/admin/users?q=OLEN');
+  assert.equal(res.statusCode, 200);
+  assert.match(res.body, /name="known" value="43"/);
+  assert.doesNotMatch(res.body, /name="known" value="42"/);
 });

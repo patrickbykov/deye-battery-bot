@@ -55,7 +55,8 @@ test('нуль заявок не малює порожній лічильник'
 test('вихід є на обох сторінках і захищений CSRF', () => {
   for (const html of [usersPage({ users, csrf: 'tok-9' }), objectsPage({ inverters, csrf: 'tok-9' })]) {
     assert.match(html, /action="\/admin\/logout"/);
-    for (const form of html.split('<form').slice(1)) {
+    // GET-форма пошуку нічого не змінює, токен їй не потрібен.
+    for (const form of html.split('<form').slice(1).filter(f => !/method="get"/.test(f))) {
       assert.match(form, /name="csrf" value="tok-9"/);
     }
   }
@@ -228,4 +229,27 @@ test('назва обʼєкта на сторінці підтвердження
 test('сторінка підтвердження без нуля підписників не бреше про людей', () => {
   const html = confirmRemovalPage({ inverter: { id: 'X', name: 'X' }, subscribers: 0, csrf: 'tok' });
   assert.doesNotMatch(html, /0 людей|0 підписан/);
+});
+
+// --- Пошук користувачів ---
+
+const two = [
+  { chat_id: 1, username: 'Petro', first_name: 'Петро', status: 'approved', requested_at: '2026-09-04T06:00:00Z', inverters: [{ id: 'A', name: 'Ліфт' }] },
+  { chat_id: 22, username: null, first_name: 'Олена', status: 'pending', requested_at: '2026-09-04T06:00:00Z', inverters: [] },
+];
+
+test('пошук: нік (з @ і в іншому регістрі), імʼя, ID й назва обʼєкта', () => {
+  for (const [q, name] of [['@petro', 'Petro'], ['олен', 'Олена'], ['22', 'Олена'], ['ліфт', 'Petro']]) {
+    const html = usersPage({ users: two, csrf: 't', query: q });
+    assert.match(html, name === 'Petro' ? /name="known" value="1"/ : /name="known" value="22"/, q);
+    assert.doesNotMatch(html, name === 'Petro' ? /name="known" value="22"/ : /name="known" value="1"/, q);
+  }
+});
+
+test('пошук: без збігів — повідомлення, а запит екранується; лічильник заявок не звужується', () => {
+  const html = usersPage({ users: two, csrf: 't', query: '<b>' });
+  assert.match(html, /Нікого не знайдено/);
+  assert.match(html, /&lt;b&gt;/);
+  assert.doesNotMatch(html, /«<b>/);
+  assert.match(html, /<b>1<\/b> заявка чекає/);
 });

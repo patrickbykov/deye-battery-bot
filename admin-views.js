@@ -274,24 +274,42 @@ function invitedSection({ invited = [], csrf, error }) {
     </form>`;
 }
 
-export function usersPage({ users, invited = [], csrf, inviteError }) {
-  const waiting = users.filter(u => u.status === 'pending').length;
+// Пошук по нікові, імені, chat_id і назвах обраних обʼєктів; регістр не важливий.
+export function matchesUser(user, query) {
+  const q = query.trim().toLowerCase().replace(/^@/, '');
+  if (!q) return true;
+  return [user.username, user.first_name, String(user.chat_id), ...user.inverters.map(i => i.name ?? i.id)]
+    .some(v => v && String(v).toLowerCase().includes(q));
+}
+
+export function usersPage({ users: everyone, invited = [], csrf, inviteError, query = '' }) {
+  const users = everyone.filter(u => matchesUser(u, query));
+  const waiting = everyone.filter(u => u.status === 'pending').length;
   const invites = invitedSection({ invited, csrf, error: inviteError });
 
-  const tally = users.length === 0 ? ''
+  const tally = everyone.length === 0 ? ''
     : waiting > 0
       ? `<p class="tally"><b>${waiting}</b> ${plural(waiting, 'заявка чекає', 'заявки чекають', 'заявок чекають')} рішення</p>`
       : '<p class="tally">Усі заявки розглянуті</p>';
 
   // Запрошення потрібне й тоді, коли користувачів ще немає — власне, тоді
   // найбільше: писати боту нікому, бо про нього ще ніхто не знає.
-  if (users.length === 0) {
+  if (everyone.length === 0) {
     return page('Користувачі', `
       ${nav('/admin/users', csrf, 0)}
       <header><h1>Користувачі</h1></header>
       <p class="empty">Користувачів ще немає.<br>Вони з’являються тут, щойно надішлють заявку боту.</p>
       ${invites}`);
   }
+
+  // Окрема GET-форма, не вкладена в форму рішень. Відфільтровані люди не
+  // потрапляють у known[], тож збереження їх не чіпає.
+  const search = `<form method="get" action="/admin/users" class="obj" role="search">
+      <input type="text" name="q" value="${esc(query)}" placeholder="Пошук: нік, імʼя, ID, обʼєкт" aria-label="Пошук користувача">
+      <button type="submit">Знайти</button>${query ? ' <a href="/admin/users">Скинути</a>' : ''}
+    </form>`;
+  const none = users.length === 0
+    ? `<p class="empty">Нікого не знайдено за запитом «${esc(query.trim())}».</p>` : '';
 
   const lines = users.map(user => {
     const nick = user.username ? '@' + esc(user.username) : esc(user.first_name ?? 'без імені');
@@ -330,10 +348,12 @@ export function usersPage({ users, invited = [], csrf, inviteError }) {
       <h1>Користувачі</h1>
       ${tally}
     </header>
+    ${search}
+    ${none}
     <form method="post" action="/admin/users">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
       <ul class="board">${lines}</ul>
-      <div class="actions">
+      <div class="actions"${users.length === 0 ? ' hidden' : ''}>
         <button type="submit">Зберегти рішення</button>
         <span class="tally">Вимкнений перемикач знімає доступ.</span>
       </div>
