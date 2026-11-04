@@ -26,6 +26,11 @@ const OUTAGE_DAYS = 30;
 // рендер — повільна метрована операція Grafana, що інколи зависає.
 const OUTAGE_IMAGE_TTL_MS = 3600_000;
 
+// Вікно підрахунку відключень. Точки приходять раз на ~5 хв, тож дрібніша
+// сітка нових даних не дає, а запит на 30 діб робить у 5 разів важчим
+// (11 с проти 2 с). Мусить збігатися з панелями 12 і 13 у Grafana.
+const OUTAGE_WINDOW_MIN = 5;
+
 // Скільки хвилин не було світла, погодинно, і скільки годин ми взагалі
 // спостерігали. Три речі тут не косметичні:
 //
@@ -53,12 +58,12 @@ points = base
 
 minutes = base
   |> filter(fn: (r) => r._field == "voltage" or r._field == "current")
-  |> aggregateWindow(every: 1m, fn: last, timeSrc: "_start", createEmpty: true)
+  |> aggregateWindow(every: ${OUTAGE_WINDOW_MIN}m, fn: last, timeSrc: "_start", createEmpty: true)
   |> fill(column: "_value", usePrevious: true)
   |> map(fn: (r) => ({ r with _value:
        if not exists r._value then 0.0
-       else if r._field == "voltage" then (if r._value < ${GRID_PRESENT_VOLTS}.0 then 1.0 else 0.0)
-       else (if r._value < ${GRID_CURRENT_AMPS} then 1.0 else 0.0) }))
+       else if r._field == "voltage" then (if r._value < ${GRID_PRESENT_VOLTS}.0 then ${OUTAGE_WINDOW_MIN}.0 else 0.0)
+       else (if r._value < ${GRID_CURRENT_AMPS} then ${OUTAGE_WINDOW_MIN}.0 else 0.0) }))
   |> group(columns: ["_time"])
   |> max()
   |> group()
@@ -355,6 +360,20 @@ export function createCommands({
     promise.catch(() => { if (outageImages.get(inverter.id) === entry) outageImages.delete(inverter.id); });
     return promise;
   }
+
+  // Прогрів: рендер раз на годину для об'єктів, на які хтось підписаний,
+  // щоб користувач не чекав і не потрапляв на зависання. Послідовно, без
+  // паралелі — рендер метрований; збій одного не зупиняє решту.
+  handlers.warmOutageImages = async () => {
+    for (const inverter of store.getAllInverters()) {
+      if (store.getSubscribers(inverter.id).length === 0) continue;
+      try {
+        await outageImageOf(inverter);
+      } catch (err) {
+        log.error(`Прогрів теплокарти ${inverter.id}: ${err.message}`);
+      }
+    }
+  };
 
   handlers.set('/outages', gated(async ({ chatId }) => {
     await eachSubscription(chatId, async inverter => {

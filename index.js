@@ -31,6 +31,12 @@ const commands = createCommands({
   log: console,
 });
 
+// Теплокарта кешується на годину; прогріваємо трохи частіше за TTL, щоб кеш
+// не встигав застаріти. Перший прогрів — із затримкою, не на старті.
+const OUTAGE_WARM_INTERVAL_MS = 55 * 60_000;
+setTimeout(() => commands.warmOutageImages(), 30_000).unref();
+setInterval(() => commands.warmOutageImages(), OUTAGE_WARM_INTERVAL_MS).unref();
+
 // Гейт схвалення не рятує від схваленого користувача, який тисне /graph
 // щосекунди: рендер Grafana — метрована операція на Free-плані.
 const commandThrottle = {};

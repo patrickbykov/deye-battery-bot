@@ -801,3 +801,40 @@ test('/outages: збій рендера не кешується', async () => {
   assert.equal(out.photos, 1, 'другий раз — картинка');
   assert.equal(out.renders, 2);
 });
+
+test('outageSummaryFlux: вікно 5 хв, і кожне вікно важить 5 хвилин', () => {
+  // Вікно й вага мусять рухатись разом: 5-хвилинне вікно з вагою 1.0 занизило б
+  // відключення в 5 разів.
+  const flux = outageSummaryFlux('INV1');
+  assert.match(flux, /aggregateWindow\(every: 5m, fn: last/);
+  assert.doesNotMatch(flux, /then 1\.0 else/);
+  assert.equal((flux.match(/then 5\.0 else 0\.0/g) ?? []).length, 2);
+});
+
+test('прогрів теплокарти: лише обʼєкти з підписниками, збій одного не зупиняє решту', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertInverter('INV2', 'Другий', 'DASH');
+  store.upsertInverter('INV3', 'Третій', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1', 'INV2']);
+  store.setUserStatus(7, 'approved', 'test');
+  const rendered = [];
+  const commands = createCommands({
+    store,
+    telegram: { sendMessage: async () => {}, sendPhoto: async () => {} },
+    grafana: {
+      queryGrafana: async () => ({}),
+      renderGrafanaPanel: async inv => {
+        rendered.push(inv.id);
+        if (inv.id === 'INV1') throw new Error('boom');
+        return Buffer.from('img');
+      },
+      getDashboardLink: () => 'https://g',
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+  });
+  await commands.warmOutageImages();
+  assert.deepEqual(rendered, ['INV1', 'INV2']);
+});
