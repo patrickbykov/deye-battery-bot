@@ -40,7 +40,8 @@ const isFresh = (time, now) => time != null && now - new Date(time).getTime() <=
 
 // Правило «Немає живлення від мережі»: короткий текст з живих показників.
 // ctx може бути null (Influx недоступний) — тоді лишаються лише заголовок і рядки, що відомі.
-// Споживання наближено береться з розряду батареї: без PV це майже все навантаження.
+// Споживання = мережа + розряд батареї, усереднене за 24 год (без PV це все навантаження).
+const NOMINAL_V = 51.2;
 export function formatGridAlert(alert, name, ctx, now = Date.now()) {
   const title = escapeHtml(humanize(alert.inverterId, alert.inverterId, name));
   const lines = [];
@@ -57,8 +58,10 @@ export function formatGridAlert(alert, name, ctx, now = Date.now()) {
       if (g.power != null) parts.push(`${num(g.power)} Вт`);
       lines.push(`🔌 Мережа: ${parts.join(', ')}`);
     }
-  } else if (ctx?.batteryPower != null && ctx.batteryPower >= 1 && isFresh(ctx.batteryTime, now)) {
-    lines.push(`💡 Споживання: ~${num(ctx.batteryPower)} Вт`);
+  } else if (ctx?.avgPower != null && ctx.avgPower >= 1) {
+    // Відсотки — частка заряду цього інвертора за годину; без ємності лише Вт.
+    const pct = ctx.capacityAh > 0 ? ` (${num(ctx.avgPower / (ctx.capacityAh * NOMINAL_V) * 100)}%)` : '';
+    lines.push(`💡 Середнє споживання за 24 год: ~${num(ctx.avgPower)} Вт/год${pct}`);
   }
 
   const t = isFresh(g?.time, now) ? kyivHm(g.time) : (g?.time ? formatKyivDate(g.time) : null);

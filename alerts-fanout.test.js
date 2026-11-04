@@ -96,14 +96,14 @@ const gridAlert = status => ({ status, inverterId: '2603274054', alertname: '⚡
 
 test('мережа: спрацювання з контекстом — заряд, споживання, час даних (Київ)', () => {
   const text = formatAlert(gridAlert('firing'), 'Ліфт', {
-    soc: 96, batteryPower: 511.4, batteryTime: T0, grid: { voltage: 0, time: Date.UTC(2026, 10, 4, 8, 37) },
+    soc: 96, avgPower: 410.4, capacityAh: 200, batteryTime: T0, grid: { voltage: 0, time: Date.UTC(2026, 10, 4, 8, 37) },
   }, NOW);
-  assert.equal(text, '⚡ Ліфт: немає мережі\n🔋 Заряд: 96%\n💡 Споживання: ~511 Вт\n🕒 Дані про мережу: 10:37');
+  assert.equal(text, '⚡ Ліфт: немає мережі\n🔋 Заряд: 96%\n💡 Середнє споживання за 24 год: ~410 Вт/год (4%)\n🕒 Дані про мережу: 10:37');
 });
 
 test('мережа: відбій показує напругу, частоту й потужність', () => {
   const text = formatAlert(gridAlert('resolved'), 'Ліфт', {
-    soc: 96, batteryPower: -300, batteryTime: T0, grid: { voltage: 224, frequency: 50, power: 970, time: Date.UTC(2026, 10, 4, 8, 52) },
+    soc: 96, avgPower: 300, capacityAh: 200, batteryTime: T0, grid: { voltage: 224, frequency: 50, power: 970, time: Date.UTC(2026, 10, 4, 8, 52) },
   }, NOW);
   assert.equal(text, '✅ Ліфт: мережа повернулась\n🔋 Заряд: 96%\n🔌 Мережа: 224 В, 50 Гц, 970 Вт\n🕒 Дані про мережу: 10:52');
 });
@@ -119,12 +119,18 @@ test('мережа: NoData не маскується під «немає мер�
 
 test('мережа: застарілі точки не видаються за поточні', () => {
   const old = Date.UTC(2026, 10, 3, 8, 37);
-  const text = formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, batteryPower: 500, batteryTime: old, grid: { voltage: 0, time: old } }, NOW);
-  assert.equal(text, '⚡ Ліфт: немає мережі\n🕒 Дані про мережу: 3 лис 10:37');
+  const text = formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, avgPower: 500, capacityAh: 200, batteryTime: old, grid: { voltage: 0, time: old } }, NOW);
+  // Добове середнє лишається коректним, навіть якщо остання точка стара.
+  assert.equal(text, '⚡ Ліфт: немає мережі\n💡 Середнє споживання за 24 год: ~500 Вт/год (5%)\n🕒 Дані про мережу: 3 лис 10:37');
 });
 
 test('мережа: -0 і мікророзряд не друкуються', () => {
   const text = formatAlert(gridAlert('resolved'), 'Ліфт', { soc: 96, batteryTime: T0, grid: { voltage: 224, frequency: 50, power: -0.3, time: T0 } }, NOW);
   assert.match(text, /224 В, 50 Гц, 0 Вт/);
-  assert.doesNotMatch(formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, batteryPower: 0.4, batteryTime: T0, grid: { time: T0 } }, NOW), /Споживання/);
+  assert.doesNotMatch(formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, avgPower: 0.4, batteryTime: T0, grid: { time: T0 } }, NOW), /споживання/);
+});
+
+test('мережа: споживання без ємності — лише Вт', () => {
+  const text = formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, avgPower: 410, capacityAh: null, batteryTime: T0, grid: { time: T0 } }, NOW);
+  assert.match(text, /~410 Вт\/год\n/);
 });

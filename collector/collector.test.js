@@ -109,3 +109,85 @@ test('бита телеметрія батареї не засліплює що�
   assert.doesNotMatch(written.join(''), /battery,inverter=SN1/);
   assert.match(warnings.join(' '), /SN1/);
 });
+
+const withCapacity = (d, ah = '200') => ({ ...d, dataList: [...d.dataList, { key: 'BatteryRatedCapacity', value: ah }] });
+
+test('ємність пишеться окремим виміром і раз на добу', async () => {
+  let t = 1_000_000;
+  const written = [];
+  const cycles = [
+    [withCapacity(device('SN1', 100))],
+    [withCapacity(device('SN1', 200))],
+    [withCapacity(device('SN1', 300))],
+  ];
+  const collector = createCollector({
+    deye: { listInverterSns: async () => ['SN1'], getLatest: async () => cycles.shift() },
+    influx: { write: async lp => written.push(lp) },
+    log: { info() {}, warn() {}, error() {} },
+    now: () => t,
+  });
+  await collector.runCycle();
+  t += 3600_000;
+  await collector.runCycle();
+  t += 24 * 3600_000;
+  await collector.runCycle();
+
+  const cap = written.filter(l => l.startsWith('battery_info'));
+  assert.equal(cap.length, 2);
+  assert.match(cap[0], /^battery_info,inverter=SN1 capacity_ah=200 100$/);
+});
+
+test('збій запису ємності не зриває запис основних точок', async () => {
+  const written = [];
+  const collector = createCollector({
+    deye: { listInverterSns: async () => ['SN1'], getLatest: async () => [withCapacity(device('SN1', 100))] },
+    influx: { write: async lp => { if (lp.startsWith('battery_info')) throw new Error('boom'); written.push(lp); } },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  await collector.runCycle();
+  assert.equal(written.length, 1);
+  assert.match(written[0], /^battery,/);
+});
+
+test('битий пристрій не зриває цикл через ємність', async () => {
+  const written = [];
+  const broken = { ...device('SN1', 100), dataList: null };
+  const collector = createCollector({
+    deye: { listInverterSns: async () => ['SN1', 'SN2'], getLatest: async () => [broken, withCapacity(device('SN2', 100))] },
+    influx: { write: async lp => written.push(lp) },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  await collector.runCycle();
+  assert.ok(written.some(l => l.startsWith('battery,inverter=SN2')));
+  assert.ok(written.some(l => l.startsWith('battery_info,inverter=SN2')));
+});
+
+test('збій запису ємності повторюється наступного циклу, постійний — ні', async () => {
+  for (const permanent of [false, true]) {
+    let capWrites = 0;
+    const collector = createCollector({
+      deye: { listInverterSns: async () => ['SN1'], getLatest: async () => [withCapacity(device('SN1', 100))] },
+      influx: { write: async lp => { if (lp.startsWith('battery_info')) { capWrites++; throw Object.assign(new Error('x'), { permanent }); } } },
+      log: { info() {}, warn() {}, error() {} },
+    });
+    await collector.runCycle();
+    await collector.runCycle();
+    assert.equal(capWrites, permanent ? 1 : 2);
+  }
+});
+
+test('ємність: один інвертор у межах доби пропускається, інший пишеться', async () => {
+  let t = 1_000_000;
+  const written = [];
+  const collector = createCollector({
+    deye: { listInverterSns: async () => ['SN1', 'SN2'], getLatest: async sns => sns.map(sn => withCapacity(device(sn, t))) },
+    influx: { write: async lp => written.push(lp) },
+    log: { info() {}, warn() {}, error() {} },
+    now: () => t,
+  });
+  await collector.runCycle();
+  t += 1000;
+  await collector.runCycle();
+  assert.equal(written.filter(l => l.startsWith('battery_info')).length, 1);
+  assert.equal(written.filter(l => l.startsWith('battery_info'))[0].split('\n').length, 2);
+});

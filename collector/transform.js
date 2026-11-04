@@ -114,6 +114,17 @@ function escapeTag(value) {
   return String(value).replace(/([,= ])/g, '\\$1');
 }
 
+// Номінальна ємність батареї (Ач) змінюється лише при заміні/доданні модулів,
+// тому пишеться окремим виміром і рідко. Поза межами або відсутня → null.
+export function toCapacityPoint(deviceData) {
+  const { deviceSn, collectionTime } = deviceData;
+  if (!Number.isFinite(collectionTime)) return null;
+  const raw = deviceData.dataList.find(d => d.key === 'BatteryRatedCapacity')?.value;
+  const value = Number(raw);
+  if (raw == null || !Number.isFinite(value) || value <= 0 || value > 100000) return null;
+  return { measurement: 'battery_info', inverter: deviceSn, timestamp: collectionTime, fields: { capacity_ah: value } };
+}
+
 export function toLineProtocol(points) {
   return points.map(({ measurement = 'battery', inverter, timestamp, fields }) => {
     // Без суфікса `i`: таблиця `battery` тримає всі шість полів як float,

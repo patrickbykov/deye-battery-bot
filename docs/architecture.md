@@ -128,11 +128,21 @@
 ```
 battery,inverter=<SN> soc,voltage,current,power,temperature,state   (усі float)
 grid,inverter=<SN>    voltage,frequency,power                        (усі float)
+battery_info,inverter=<SN> capacity_ah                               (float)
 ```
 
 `grid` — окремий вимір, а не поля в `battery`: це інша сутність, інакше назва
 виміру брехала б. `grid.voltage` — **максимум трьох фаз**: втрата однієї фази
 не є блекаутом.
+
+`battery_info.capacity_ah` — номінальна ємність батареї в Ач з ключа Deye
+`BatteryRatedCapacity` (станом на 4 лис 2026: 200 + 200 + 460 Ач). Пишеться
+окремим виміром не частіше ніж раз на 24 год на інвертор (у памʼяті процесу, тож
+після перезапуску бота перший запис іде одразу). Значення поза `0..100000` або
+не число пропускаються. Ємність пишеться після `battery`/`grid`; її збій лише логується й
+не зупиняє цикл (тимчасова помилка повторюється наступного циклу, постійна —
+на 24 год пізніше). Мітка часу — `collectionTime` пристрою. Для читання: Flux
+`filter(fn: (r) => r._measurement == "battery_info")` + `last()`.
 
 ## Схема SQLite (`user_version = 3`)
 

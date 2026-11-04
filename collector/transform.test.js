@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toPoint, toGridPoint, toLineProtocol, selectNewPoints } from './transform.js';
+import { toPoint, toGridPoint, toCapacityPoint, toLineProtocol, selectNewPoints } from './transform.js';
 
 // Форма з docs/deye-cloud-api.md — реальна відповідь device/latest, обрізана.
 function deviceData(overrides = {}) {
@@ -178,4 +178,14 @@ test('дедуп не губить другу точку того самого �
   // ключем інвертора викинув би одну з них.
   const points = [toPoint(deviceData()), toGridPoint(deviceData())];
   assert.equal(selectNewPoints(points, new Map()).length, 2);
+});
+
+test('toCapacityPoint: ємність у Ач або null', () => {
+  const dev = v => ({ deviceSn: 'S', collectionTime: 5, dataList: v === undefined ? [] : [{ key: 'BatteryRatedCapacity', value: v }] });
+  assert.deepEqual(toCapacityPoint(dev('460')), { measurement: 'battery_info', inverter: 'S', timestamp: 5, fields: { capacity_ah: 460 } });
+  assert.equal(toCapacityPoint(dev(undefined)), null);
+  assert.equal(toCapacityPoint(dev('0')), null);
+  assert.equal(toCapacityPoint(dev('abc')), null);
+  assert.equal(toCapacityPoint(dev('-5')), null);
+  assert.equal(toCapacityPoint(dev('100001')), null);
 });
