@@ -22,6 +22,10 @@ export function parseCommand(text) {
 // відсутність відключень.
 const OUTAGE_DAYS = 30;
 
+// Теплокарта погодинна, тож картинка старша за годину нічого не втрачає, а
+// рендер — повільна метрована операція Grafana, що інколи зависає.
+const OUTAGE_IMAGE_TTL_MS = 3600_000;
+
 // Скільки хвилин не було світла, погодинно, і скільки годин ми взагалі
 // спостерігали. Три речі тут не косметичні:
 //
@@ -91,7 +95,7 @@ function applyInvite(store, chatId, from, log) {
 // notifyAdmin за замовчуванням нічого не робить: більшість команд адміна не
 // стосуються, і тести решти шляхів не мають бути змушені його підставляти.
 export function createCommands({
-  store, telegram, grafana, log, notifyAdmin = async () => {}, sleep = defaultSleep,
+  store, telegram, grafana, log, notifyAdmin = async () => {}, sleep = defaultSleep, now = Date.now,
 }) {
   const { sendMessage, sendPhoto } = telegram;
   const { queryGrafana, renderGrafanaPanel, getDashboardLink } = grafana;
@@ -337,13 +341,26 @@ export function createCommands({
     }
   }
 
+  // Кеш тримає проміс: паралельні запити одного об'єкта діляться одним
+  // рендером. Збій не кешується.
+  const outageImages = new Map();   // inverter.id → { at, promise }
+  function outageImageOf(inverter) {
+    const hit = outageImages.get(inverter.id);
+    if (hit && now() - hit.at < OUTAGE_IMAGE_TTL_MS) return hit.promise;
+    const promise = renderGrafanaPanel(inverter, {
+      panelId: OUTAGE_PANEL_ID, from: `now-${OUTAGE_DAYS}d`,
+    });
+    const entry = { at: now(), promise };
+    outageImages.set(inverter.id, entry);
+    promise.catch(() => { if (outageImages.get(inverter.id) === entry) outageImages.delete(inverter.id); });
+    return promise;
+  }
+
   handlers.set('/outages', gated(async ({ chatId }) => {
     await eachSubscription(chatId, async inverter => {
       try {
         const summary = await outageSummaryOf(inverter);
-        const image = await renderGrafanaPanel(inverter, {
-          panelId: OUTAGE_PANEL_ID, from: `now-${OUTAGE_DAYS}d`,
-        });
+        const image = await outageImageOf(inverter);
         // Без розмітки й без екранування: sendPhoto не ставить parse_mode,
         // тож назва об'єкта з кутовою дужкою тут нікуди не вибухне.
         await sendPhoto(chatId, image,

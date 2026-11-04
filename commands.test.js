@@ -750,3 +750,54 @@ test('/help згадує /outages серед щоденних команд', asy
   assert.match(text, /\/outages/);
   assert.ok(text.indexOf('/outages') < text.indexOf('/subscribe'), '/outages має бути вище');
 });
+
+function outageCacheHarness({ failFirst = false } = {}) {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(7, 'petro', 'Петро');
+  store.replaceSubscriptions(7, ['INV1']);
+  store.setUserStatus(7, 'approved', 'test');
+  const clock = { t: 1_000_000 };
+  const out = { renders: 0, photos: 0, texts: 0 };
+  const commands = createCommands({
+    store,
+    telegram: {
+      sendMessage: async () => { out.texts++; },
+      sendPhoto: async () => { out.photos++; },
+    },
+    grafana: {
+      queryGrafana: async () => ({ results: { A: { frames: [] } } }),
+      renderGrafanaPanel: async () => {
+        out.renders++;
+        if (failFirst && out.renders === 1) throw new Error('aborted');
+        return Buffer.from('img');
+      },
+      getDashboardLink: () => 'https://g',
+    },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: () => Promise.resolve(),
+    now: () => clock.t,
+  });
+  return { commands, clock, out };
+}
+
+test('/outages: теплокарта кешується на годину, потім рендериться знову', async () => {
+  const { commands, clock, out } = outageCacheHarness();
+  await commands.get('/outages')({ chatId: 7 });
+  clock.t += 59 * 60_000;
+  await commands.get('/outages')({ chatId: 7 });
+  assert.equal(out.renders, 1);
+  assert.equal(out.photos, 2);
+  clock.t += 2 * 60_000;
+  await commands.get('/outages')({ chatId: 7 });
+  assert.equal(out.renders, 2);
+});
+
+test('/outages: збій рендера не кешується', async () => {
+  const { commands, out } = outageCacheHarness({ failFirst: true });
+  await commands.get('/outages')({ chatId: 7 });
+  await commands.get('/outages')({ chatId: 7 });
+  assert.equal(out.texts, 1, 'перший раз — фолбек');
+  assert.equal(out.photos, 1, 'другий раз — картинка');
+  assert.equal(out.renders, 2);
+});
