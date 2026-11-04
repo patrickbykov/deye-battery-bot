@@ -100,6 +100,11 @@ const CSS = `
 
   h2{font-size:1.05rem;font-weight:650;margin:2.5rem 0 .35rem}
   .hint{color:var(--ink-2);font-size:.875rem;margin:0 0 .9rem}
+  .search{display:flex;align-items:center;gap:.9rem;margin:0 0 1rem}
+  .search input[type=text]{font:inherit;flex:1 1 auto;min-width:0;padding:.55rem .7rem;border-radius:8px;
+    border:1px solid var(--rule);background:transparent;color:var(--ink)}
+  .search input[type=text]:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+  .search a{color:var(--ink-2)}
   .obj{display:flex;align-items:center;gap:.9rem;padding:.75rem 1rem}
   .obj + .obj{border-top:1px solid var(--rule)}
   .obj input[type=text]{font:inherit;flex:1 1 auto;min-width:0;padding:.5rem .65rem;
@@ -304,7 +309,7 @@ export function usersPage({ users: everyone, invited = [], csrf, inviteError, qu
 
   // Окрема GET-форма, не вкладена в форму рішень. Відфільтровані люди не
   // потрапляють у known[], тож збереження їх не чіпає.
-  const search = `<form method="get" action="/admin/users" class="obj" role="search">
+  const search = `<form method="get" action="/admin/users" class="search" role="search">
       <input type="text" name="q" value="${esc(query)}" placeholder="Пошук: нік, імʼя, ID, обʼєкт" aria-label="Пошук користувача">
       <button type="submit">Знайти</button>${query ? ' <a href="/admin/users">Скинути</a>' : ''}
     </form>`;
