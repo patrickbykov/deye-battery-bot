@@ -1,4 +1,5 @@
 import { selectRecipients, formatAlert } from './alerts-fanout.js';
+import { isGridAlert, fetchGridContext } from './grid-context.js';
 import { dedupKey } from './webhook-grafana.js';
 
 // Telegram тримає ~30 msg/s глобально. 120 мс дає ~8/s — з великим запасом.
@@ -13,7 +14,7 @@ const DEDUP_WINDOW_MS = 15 * 60_000;
 // що підписникам цей текст не пішов.
 const PAUSED_PREFIX = '⏸ <i>Пауза сповіщень — підписникам не надіслано</i>\n\n';
 
-export function createAlertQueue({ store, send, log, sleep, adminChatId = null, isPaused = () => false }) {
+export function createAlertQueue({ store, send, log, sleep, adminChatId = null, isPaused = () => false, queryGrafana = null }) {
   async function deliverOne(chatId, text, key) {
     // Дедуп на пару (алерт, адресат): різні люди підписані на різне.
     if (store.wasDelivered(key, chatId, DEDUP_WINDOW_MS)) return false;
@@ -48,7 +49,12 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null, 
     // Одне читання на вебхук: пауза, знята посеред розсилки, не мусить
     // розрізати один алерт на «комусь пішов, комусь ні».
     const paused = isPaused();
-    for (const alert of alerts) {
+    // Паралельно й лише для відомих інверторів: послідовні таймаути розтягували
+    // відповідь вебхука за ліміт Grafana, а id із вебхука не має потрапляти в Flux.
+    const contexts = await Promise.all(alerts.map(a =>
+      queryGrafana && isGridAlert(a) && a.inverterId && store.getInverter(a.inverterId)
+        ? fetchGridContext(a.inverterId, queryGrafana) : null));
+    for (const [i, alert] of alerts.entries()) {
       const inverter = alert.inverterId ? store.getInverter(alert.inverterId) : null;
       const { chatIds, reason } = selectRecipients({
         inverterId: alert.inverterId,
@@ -67,7 +73,8 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null, 
       const recipients = paused ? chatIds.filter(id => id === adminChatId) : chatIds;
       if (paused) log.info(`Пауза: алерт «${alert.alertname}» підписникам не надіслано`);
 
-      const text = (paused ? PAUSED_PREFIX : '') + formatAlert(alert, inverter?.name);
+      const ctx = contexts[i];
+      const text = (paused ? PAUSED_PREFIX : '') + formatAlert(alert, inverter?.name, ctx);
       const key = dedupKey(alert);
       const targets = recipients.slice(0, MAX_RECIPIENTS);
       if (recipients.length > MAX_RECIPIENTS) {

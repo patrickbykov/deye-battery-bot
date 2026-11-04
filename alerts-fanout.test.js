@@ -87,3 +87,44 @@ test('назва підставляється і у відбій', () => {
       resolved: 'заряд 2512151417 піднявся вище 20%' }, 'Клочківська 117');
   assert.match(text, /Клочківська 117/);
 });
+
+import { formatGridAlert } from './alerts-fanout.js';
+
+const T0 = Date.UTC(2026, 10, 4, 8, 37);
+const NOW = Date.UTC(2026, 10, 4, 8, 55);
+const gridAlert = status => ({ status, inverterId: '2603274054', alertname: '⚡ Немає живлення від мережі' });
+
+test('мережа: спрацювання з контекстом — заряд, споживання, час даних (Київ)', () => {
+  const text = formatAlert(gridAlert('firing'), 'Ліфт', {
+    soc: 96, batteryPower: 511.4, batteryTime: T0, grid: { voltage: 0, time: Date.UTC(2026, 10, 4, 8, 37) },
+  }, NOW);
+  assert.equal(text, '⚡ Ліфт: немає мережі\n🔋 Заряд: 96%\n💡 Споживання: ~511 Вт\n🕒 Дані про мережу: 10:37');
+});
+
+test('мережа: відбій показує напругу, частоту й потужність', () => {
+  const text = formatAlert(gridAlert('resolved'), 'Ліфт', {
+    soc: 96, batteryPower: -300, batteryTime: T0, grid: { voltage: 224, frequency: 50, power: 970, time: Date.UTC(2026, 10, 4, 8, 52) },
+  }, NOW);
+  assert.equal(text, '✅ Ліфт: мережа повернулась\n🔋 Заряд: 96%\n🔌 Мережа: 224 В, 50 Гц, 970 Вт\n🕒 Дані про мережу: 10:52');
+});
+
+test('мережа: без контексту лишається лише заголовок', () => {
+  assert.equal(formatGridAlert(gridAlert('firing'), 'Ліфт', null), '⚡ Ліфт: немає мережі');
+});
+
+test('мережа: NoData не маскується під «немає мережі»', () => {
+  const text = formatAlert({ ...gridAlert('firing'), stateReason: 'NoData' }, 'Ліфт', null);
+  assert.match(text, /Немає даних для перевірки/);
+});
+
+test('мережа: застарілі точки не видаються за поточні', () => {
+  const old = Date.UTC(2026, 10, 3, 8, 37);
+  const text = formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, batteryPower: 500, batteryTime: old, grid: { voltage: 0, time: old } }, NOW);
+  assert.equal(text, '⚡ Ліфт: немає мережі\n🕒 Дані про мережу: 3 лис 10:37');
+});
+
+test('мережа: -0 і мікророзряд не друкуються', () => {
+  const text = formatAlert(gridAlert('resolved'), 'Ліфт', { soc: 96, batteryTime: T0, grid: { voltage: 224, frequency: 50, power: -0.3, time: T0 } }, NOW);
+  assert.match(text, /224 В, 50 Гц, 0 Вт/);
+  assert.doesNotMatch(formatAlert(gridAlert('firing'), 'Ліфт', { soc: 96, batteryPower: 0.4, batteryTime: T0, grid: { time: T0 } }, NOW), /Споживання/);
+});

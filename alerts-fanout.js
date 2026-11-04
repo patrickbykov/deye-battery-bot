@@ -1,4 +1,4 @@
-import { escapeHtml } from './helpers.js';
+import { escapeHtml, formatKyivDate } from './helpers.js';
 
 // Адресація рахується на кожен елемент alerts[] окремо, не на конверт:
 // в одному вебхуку можуть приїхати алерти по різних інверторах.
@@ -25,8 +25,52 @@ function humanize(text, inverterId, name) {
   return String(text ?? '').replaceAll(inverterId, name);
 }
 
-export function formatAlert(alert, name) {
+function kyivHm(time) {
+  if (!time) return null;
+  const d = new Date(time);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// Math.round, а не toFixed: (-0.4).toFixed(0) дає «-0».
+const num = v => String(Math.round(Number(v)) + 0);
+// Точки старші за годину не видаємо за поточні (інвертор міг замовкнути в блекаут).
+const FRESH_MS = 60 * 60_000;
+const isFresh = (time, now) => time != null && now - new Date(time).getTime() <= FRESH_MS;
+
+// Правило «Немає живлення від мережі»: короткий текст з живих показників.
+// ctx може бути null (Influx недоступний) — тоді лишаються лише заголовок і рядки, що відомі.
+// Споживання наближено береться з розряду батареї: без PV це майже все навантаження.
+export function formatGridAlert(alert, name, ctx, now = Date.now()) {
+  const title = escapeHtml(humanize(alert.inverterId, alert.inverterId, name));
+  const lines = [];
+  if (alert.status === 'resolved') lines.push(`✅ ${title}: мережа повернулась`);
+  else lines.push(`⚡ ${title}: немає мережі`);
+
+  if (ctx?.soc != null && isFresh(ctx.batteryTime, now)) lines.push(`🔋 Заряд: ${num(ctx.soc)}%`);
+
+  const g = ctx?.grid;
+  if (alert.status === 'resolved') {
+    if (g?.voltage != null) {
+      const parts = [`${num(g.voltage)} В`];
+      if (g.frequency != null) parts.push(`${num(g.frequency)} Гц`);
+      if (g.power != null) parts.push(`${num(g.power)} Вт`);
+      lines.push(`🔌 Мережа: ${parts.join(', ')}`);
+    }
+  } else if (ctx?.batteryPower != null && ctx.batteryPower >= 1 && isFresh(ctx.batteryTime, now)) {
+    lines.push(`💡 Споживання: ~${num(ctx.batteryPower)} Вт`);
+  }
+
+  const t = isFresh(g?.time, now) ? kyivHm(g.time) : (g?.time ? formatKyivDate(g.time) : null);
+  if (t) lines.push(`🕒 Дані про мережу: ${t}`);
+  return lines.join('\n');
+}
+
+export function formatAlert(alert, name, ctx = null, now = Date.now()) {
   const id = alert.inverterId;
+  if (alert.alertname && String(alert.alertname).includes('Немає живлення від мережі') && alert.stateReason !== 'NoData') {
+    return formatGridAlert(alert, name, ctx, now);
+  }
   if (alert.status === 'resolved') {
     return `✅ Все гаразд — ${escapeHtml(humanize(alert.resolved || 'стан нормалізувався', id, name))}`;
   }

@@ -57,6 +57,7 @@ const alertQueue = createAlertQueue({
   sleep,
   adminChatId: ADMIN_CHAT_ID,
   isPaused: pauseControl.isActive,
+  queryGrafana,
 });
 
 const PAUSE_TICK_MS = 60_000;
