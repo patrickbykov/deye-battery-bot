@@ -22,6 +22,15 @@ test('невідомий інвертор не губиться мовчки —
   assert.equal(r.reason, 'unknown-inverter');
 });
 
+test('«інвертор відʼєднався» йде лише адміну, не підписникам', () => {
+  const r = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2], adminChatId: 99,
+    alertname: '🔌 Інвертор відʼєднався від мережі' });
+  assert.deepEqual(r.chatIds, [99]);
+  const blackout = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2], adminChatId: 99,
+    alertname: '⚡ Немає живлення від мережі' });
+  assert.deepEqual(blackout.chatIds.sort((a, b) => a - b), [1, 2, 99]);
+});
+
 test('відсутній адмін не породжує адресата null', () => {
   const r = selectRecipients({ inverterId: null, inverterKnown: false, subscribers: [1], adminChatId: null });
   assert.deepEqual(r.chatIds, []);

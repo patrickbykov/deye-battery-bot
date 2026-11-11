@@ -84,6 +84,24 @@ test('невідомий інвертор без адміна нікому не 
   assert.equal(sent.length, 0);
 });
 
+test('«інвертор відʼєднався» черга шле лише адміну', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(1, 'u1', 'U1');
+  store.replaceSubscriptions(1, ['INV1']);
+  store.setUserStatus(1, 'approved', 'test');
+  const sent = [];
+  const queue = createAlertQueue({
+    store,
+    send: async chatId => { sent.push(chatId); return { ok: true }; },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: async () => {},
+    adminChatId: 99,
+  });
+  await queue.deliver([alert({ alertname: '🔌 Інвертор відʼєднався від мережі' })]);
+  assert.deepEqual(sent, [99]);
+});
+
 test('на паузі підписникам не шле, адміну — з позначкою', async () => {
   const store = createDb(':memory:');
   store.upsertInverter('INV1', 'Перший', 'DASH');

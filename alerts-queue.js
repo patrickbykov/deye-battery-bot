@@ -62,9 +62,10 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null, 
         inverterKnown: !!inverter,
         subscribers: alert.inverterId ? store.getSubscribers(alert.inverterId) : [],
         adminChatId,
+        alertname: alert.alertname,
       });
 
-      if (reason !== 'subscribers') {
+      if (reason !== 'subscribers' && reason !== 'admin-only') {
         log.warn(`Алерт «${alert.alertname}» без адресації по інверторах: ${reason}`);
       }
 

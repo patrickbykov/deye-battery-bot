@@ -2,7 +2,11 @@ import { escapeHtml, formatKyivDate } from './helpers.js';
 
 // Адресація рахується на кожен елемент alerts[] окремо, не на конверт:
 // в одному вебхуку можуть приїхати алерти по різних інверторах.
-export function selectRecipients({ inverterId, inverterKnown, subscribers, adminChatId }) {
+// Правило 5: подія коротша за кадр і вже минула, коли приходить сповіщення,
+// а після блекауту дублює «Немає живлення». Мешканцю діяти нема як — лише адміну.
+const ADMIN_ONLY_ALERT = /від[ʼ'’]єднався від мережі/;
+
+export function selectRecipients({ inverterId, inverterKnown, subscribers, adminChatId, alertname = '' }) {
   if (!inverterId || !inverterKnown) {
     // Алерт без інвертора (застій даних) або з невідомим — це інцидент
     // моніторингу, а не конкретного будинку. Полагодити може лише адмін.
@@ -10,6 +14,10 @@ export function selectRecipients({ inverterId, inverterKnown, subscribers, admin
       chatIds: adminChatId ? [adminChatId] : [],
       reason: inverterId ? 'unknown-inverter' : 'no-label',
     };
+  }
+
+  if (ADMIN_ONLY_ALERT.test(alertname)) {
+    return { chatIds: adminChatId ? [adminChatId] : [], reason: 'admin-only' };
   }
 
   const recipients = new Set(subscribers);
