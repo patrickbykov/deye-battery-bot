@@ -47,6 +47,18 @@ test('повторна доставка того самого алерту не 
   assert.equal(sent.length, 2, 'другий прохід не мав нічого слати');
 });
 
+test('пересилання групи через 16 хв не дублює, нагадування через 4 год — проходить', async t => {
+  const { queue, sent } = harness();
+  await queue.deliver([alert()]);
+  const realNow = Date.now();
+  t.mock.method(Date, 'now', () => realNow + 16 * 60_000);
+  await queue.deliver([alert()]);
+  assert.equal(sent.length, 2, 'Grafana переслала групу — це не новий алерт');
+  Date.now.mock.mockImplementation(() => realNow + 4 * 3600_000);
+  await queue.deliver([alert()]);
+  assert.equal(sent.length, 4, 'repeat_interval має дійти');
+});
+
 test('429 — дочекатись retry_after і повторити, а не загубити', async () => {
   let attempts = 0;
   const { queue, sent, slept } = harness(async (chatId, text) => {
