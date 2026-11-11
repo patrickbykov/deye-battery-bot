@@ -6,7 +6,7 @@ import { escapeHtml, formatKyivDate } from './helpers.js';
 // а після блекауту дублює «Немає живлення». Мешканцю діяти нема як — лише адміну.
 const ADMIN_ONLY_ALERT = /від[ʼ'’]єднався від мережі/;
 
-export function selectRecipients({ inverterId, inverterKnown, subscribers, adminChatId, alertname = '' }) {
+export function selectRecipients({ inverterId, inverterKnown, subscribers, adminChatId, adminSubscribed = false, alertname = '' }) {
   if (!inverterId || !inverterKnown) {
     // Алерт без інвертора (застій даних) або з невідомим — це інцидент
     // моніторингу, а не конкретного будинку. Полагодити може лише адмін.
@@ -20,8 +20,10 @@ export function selectRecipients({ inverterId, inverterKnown, subscribers, admin
     return { chatIds: adminChatId ? [adminChatId] : [], reason: 'admin-only' };
   }
 
+  // Алерти будинку адмін отримує як звичайний підписник — лише на свої обʼєкти.
+  // Статус не перевіряємо: адмін сам схвалює заявки, своєї може й не мати.
   const recipients = new Set(subscribers);
-  if (adminChatId) recipients.add(adminChatId);   // Set, щоб адмін-підписник не отримав дубль
+  if (adminChatId && adminSubscribed) recipients.add(adminChatId);   // Set — без дубля
   return { chatIds: [...recipients], reason: 'subscribers' };
 }
 

@@ -3,9 +3,19 @@ import assert from 'node:assert/strict';
 import { selectRecipients, formatAlert } from './alerts-fanout.js';
 import { createDb } from './db.js';
 
-test('адресує схваленим підписникам і адміну без дубля', () => {
-  const r = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2, 99], adminChatId: 99 });
+test('адресує схваленим підписникам і адміну-підписнику без дубля', () => {
+  const r = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2, 99], adminChatId: 99, adminSubscribed: true });
   assert.deepEqual(r.chatIds.sort((a, b) => a - b), [1, 2, 99]);
+});
+
+test('алерт будинку не йде адміну, який на нього не підписаний', () => {
+  const r = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2], adminChatId: 99 });
+  assert.deepEqual(r.chatIds.sort((a, b) => a - b), [1, 2]);
+});
+
+test('адмін підписаний без схваленої заявки — все одно отримує свій обʼєкт', () => {
+  const r = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1], adminChatId: 99, adminSubscribed: true });
+  assert.deepEqual(r.chatIds.sort((a, b) => a - b), [1, 99]);
 });
 
 test('алерт без мітки інвертора йде лише адміну', () => {
@@ -28,7 +38,7 @@ test('«інвертор відʼєднався» йде лише адміну, 
   assert.deepEqual(r.chatIds, [99]);
   const blackout = selectRecipients({ inverterId: 'INV1', inverterKnown: true, subscribers: [1, 2], adminChatId: 99,
     alertname: '⚡ Немає живлення від мережі' });
-  assert.deepEqual(blackout.chatIds.sort((a, b) => a - b), [1, 2, 99]);
+  assert.deepEqual(blackout.chatIds.sort((a, b) => a - b), [1, 2]);
 });
 
 test('відсутній адмін не породжує адресата null', () => {

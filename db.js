@@ -220,9 +220,8 @@ export function createDb(filename) {
         .all().map(r => r.chat_id),
 
     // --- Доставка алертів ---
-    // Вікно, а не вічний ключ: Grafana повторює сповіщення для алерту, що
-    // досі горить, кожні repeat_interval (типово 4 год). Вічний дедуп убив би
-    // ці нагадування — SOC лежить на 15% третю добу, а повідомлень немає.
+    // Вікно задає викликач (alerts-queue.js): ключ містить startsAt, тож
+    // вікно лише гасить повтори Grafana для тієї самої події.
     wasDelivered: (dedupKey, chatId, windowMs) => {
       const row = db.prepare(
         'SELECT delivered_at FROM alert_deliveries WHERE dedup_key = ? AND chat_id = ?'

@@ -47,7 +47,7 @@ test('повторна доставка того самого алерту не 
   assert.equal(sent.length, 2, 'другий прохід не мав нічого слати');
 });
 
-test('пересилання групи через 16 хв не дублює, нагадування через 4 год — проходить', async t => {
+test('повтори Grafana тієї самої події не доходять, нова подія — доходить', async t => {
   const { queue, sent } = harness();
   await queue.deliver([alert()]);
   const realNow = Date.now();
@@ -56,7 +56,9 @@ test('пересилання групи через 16 хв не дублює, н
   assert.equal(sent.length, 2, 'Grafana переслала групу — це не новий алерт');
   Date.now.mock.mockImplementation(() => realNow + 4 * 3600_000);
   await queue.deliver([alert()]);
-  assert.equal(sent.length, 4, 'repeat_interval має дійти');
+  assert.equal(sent.length, 2, 'нагадування repeat_interval не шлемо');
+  await queue.deliver([alert({ startsAt: '2026-09-04T12:00:00Z' })]);
+  assert.equal(sent.length, 4, 'новий startsAt — нова подія');
 });
 
 test('429 — дочекатись retry_after і повторити, а не загубити', async () => {
@@ -117,7 +119,27 @@ test('на паузі підписникам не шле, адміну — з п
     adminChatId: 99,
     isPaused: () => true,
   });
+  store.upsertUser(99, 'adm', 'Адмін');
+  store.replaceSubscriptions(99, ['INV1']);   // адмін отримує лише свої обʼєкти, статус не важить
   await queue.deliver([alert()]);
   assert.deepEqual(sent.map(s => s.chatId), [99]);
   assert.match(sent[0].text, /пауз/i);
+});
+
+test('адмін не отримує алерт обʼєкта, на який не підписаний', async () => {
+  const store = createDb(':memory:');
+  store.upsertInverter('INV1', 'Перший', 'DASH');
+  store.upsertUser(1, 'u1', 'U1');
+  store.replaceSubscriptions(1, ['INV1']);
+  store.setUserStatus(1, 'approved', 'test');
+  const sent = [];
+  const queue = createAlertQueue({
+    store,
+    send: async chatId => { sent.push(chatId); return { ok: true }; },
+    log: { info() {}, warn() {}, error() {} },
+    sleep: async () => {},
+    adminChatId: 99,
+  });
+  await queue.deliver([alert({ alertname: '⚡ Немає живлення від мережі' })]);
+  assert.deepEqual(sent, [1]);
 });

@@ -6,10 +6,10 @@ import { dedupKey } from './webhook-grafana.js';
 const SEND_GAP_MS = 120;
 // Стеля на один алерт: 100 × 120 мс = 12 с, у межах будь-якого таймаута.
 const MAX_RECIPIENTS = 100;
-// Grafana пересилає всю групу при кожній зміні її складу — і через 16 хв,
-// і через годину (дубль 2026-11-10 20:31 при вікні 15 хв). Тому вікно
-// трохи менше за repeat_interval (4 год): нагадування проходять, пересилання групи — ні.
-const DEDUP_WINDOW_MS = 3 * 3600_000;
+// Нагадування не потрібні: одне спрацювання, потім один відбій. Ключ містить
+// startsAt, тож нова подія завжди проходить; повтори Grafana (repeat_interval,
+// пересилання групи) — ні. 7 днів = строк pruneDeliveries (index.js).
+const DEDUP_WINDOW_MS = 7 * 24 * 3600_000;
 
 // Позначка для адміна: під час паузи він отримує алерт один, і має бачити,
 // що підписникам цей текст не пішов.
@@ -62,6 +62,7 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null, 
         inverterKnown: !!inverter,
         subscribers: alert.inverterId ? store.getSubscribers(alert.inverterId) : [],
         adminChatId,
+        adminSubscribed: !!(adminChatId && inverter && store.getSubscriberChatIds(alert.inverterId).includes(adminChatId)),
         alertname: alert.alertname,
       });
 
@@ -70,8 +71,7 @@ export function createAlertQueue({ store, send, log, sleep, adminChatId = null, 
       }
 
       // Адмін лишається на звʼязку: пауза глушить людей, а не моніторинг.
-      // Алерт, пропущений підписниками, повториться після паузи з наступним
-      // repeat_interval Grafana, якщо проблема ще триває.
+      // Пропущене під час паузи підписникам не дошлемо: нагадувань немає.
       const recipients = paused ? chatIds.filter(id => id === adminChatId) : chatIds;
       if (paused) log.info(`Пауза: алерт «${alert.alertname}» підписникам не надіслано`);
 
